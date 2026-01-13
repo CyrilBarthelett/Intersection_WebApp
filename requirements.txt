@@ -1,4 +1,10 @@
+<<<<<<< HEAD
 streamlit
 openpyxl
 numpy
+=======
+streamlit
+openpyxl
+numpy
+>>>>>>> 5990b1326f8bff3498181549b3e1013a44fcac51
 matplotlib
