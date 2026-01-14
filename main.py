@@ -66,6 +66,44 @@ GROUP_SLOTS = {
 
 SIDE_COLOR = {"N": "tab:blue", "E": "tab:orange", "S": "tab:green", "W": "tab:red"}
 
+def add_flow_label_before_start(ax, A, u_flow, w, side, text, color, fontsize=6):
+    A = np.asarray(A, float)
+
+    back = 0.15
+
+    # Use a direction for where "before start" is located.
+    # If you force axis-aligned text, also place it axis-aligned.
+    if side == "E":
+        u_pos = np.array([1.0, 0.0])     # move outward to the right
+        angle_deg = 0
+        ha, va = "left", "center"
+    elif side == "W":
+        u_pos = np.array([-1.0, 0.0])    # move outward to the left
+        angle_deg = 0
+        ha, va = "right", "center"
+    elif side == "N":
+        u_pos = np.array([0.0, 1.0])     # move outward up
+        angle_deg = -90                  # readable N -> S
+        ha, va = "right", "center"
+    else:  # "S"
+        u_pos = np.array([0.0, -1.0])    # move outward down
+        angle_deg = -90
+        ha, va = "left", "center"
+
+    pos = A + back * u_pos
+
+    ax.text(
+        pos[0], pos[1], text,
+        rotation=angle_deg,
+        rotation_mode="anchor",
+        ha=ha, va=va,
+        fontsize=fontsize,
+        color=color,
+        zorder=50,
+        clip_on=False
+    )
+
+
 def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
     """
     Calculate width array based on KFZ values using a GLOBAL mapping:
@@ -231,6 +269,10 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
         W[j] = w
     active_points = set(W.keys())
 
+    # Map each flow (i,j) -> traffic value (same ordering as flows_present)
+    flow_val = {(i, j): float(v) for (i, j), v in zip(flows_present, traffic)}
+    show_departure_labels = True
+
     # Active groups
     GROUP_ACTIVE = {
         key: [pid for pid in values if pid in active_points]
@@ -239,10 +281,12 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
 
     # Colors
     departing_points = set()
+    pid_to_side = {}          # NEW: point id -> "N"/"E"/"S"/"W"
     point_to_color = {}
     for side in ("N", "E", "S", "W"):
         for p in GROUP_ACTIVE[(side, "dep")]:
             departing_points.add(p)
+            pid_to_side[p] = side          # NEW
             point_to_color[p] = SIDE_COLOR[side]
 
     def flow_color(i, j, default="lightblue"):
@@ -282,6 +326,46 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
         else:
             Z = C + np.array([A[0], B[1]])
             add_bezier_ribbon(ax, A, B, Z, w, col)
+            
+        if show_departure_labels:
+            start_pid = None
+            end_pid = None
+
+        if i in departing_points:
+            start_pid, end_pid = i, j
+        elif j in departing_points:
+            start_pid, end_pid = j, i
+
+        if start_pid is not None and start_pid in P and end_pid in P:
+            A0 = np.asarray(P[i], float)
+            B0 = np.asarray(P[j], float)
+
+            Astart = np.asarray(P[start_pid], float)
+            Bend = np.asarray(P[end_pid], float)
+
+            side = pid_to_side[start_pid]
+            val = flow_val.get((i, j), None)
+
+            if val is not None:
+                is_rect = tuple(sorted((i, j))) in RECT_FLOWS_U
+
+                if is_rect:
+                    v = (Bend - Astart)
+                else:
+                    Z = C + np.array([A0[0], B0[1]])
+                    P1 = inward_ctrl(Z, A0, inward)
+                    P2 = inward_ctrl(Z, B0, inward)
+
+                    if start_pid == i:
+                        v = np.asarray(P1) - np.asarray(A0)
+                    else:
+                        v = np.asarray(P2) - np.asarray(B0)
+
+                L = np.hypot(v[0], v[1]) + 1e-12
+                u_lbl = v / L
+
+                txt = f"{int(round(val))}"
+                add_flow_label_before_start(ax, Astart, u_lbl, w, side, txt, color=col, fontsize=6)
 
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
