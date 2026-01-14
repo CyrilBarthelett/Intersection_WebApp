@@ -6,7 +6,7 @@ from main import generate_png_from_excel
 # --------------------------------------------------
 # Page configuration (must be first Streamlit call)
 # --------------------------------------------------
-st.set_page_config(page_title="Traffic Flow Plot",page_icon="🛣️",layout="centered")
+st.set_page_config(page_title="Traffic Flow Plot",page_icon="🛣️",layout="wide")
 
 # --------------------------------------------------
 # Page title and instructions
