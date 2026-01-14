@@ -18,7 +18,7 @@ from openpyxl import load_workbook
 
 # --------------------- CONFIG ---------------------
 width_min = 0.1
-width_max = 0.8
+width_max = 0.7
 
 # 12 directions possible (R1..R12) -> endpoints (i,j)
 DIR_TO_FLOW = {
@@ -66,14 +66,27 @@ GROUP_SLOTS = {
 
 SIDE_COLOR = {"N": "tab:blue", "E": "tab:orange", "S": "tab:green", "W": "tab:red"}
 
-def calculate_width(direction_dic):
-    """Calculate width array for traffic visualization based on KFZ values."""
-    traffic = np.array([list(sub_dic.values())[1] for sub_dic in direction_dic.values()])  # kfz_traffic
-    if traffic.size == 1 or np.isclose(traffic.max(), traffic.min()):
-        width = np.round(np.full_like(traffic, (width_min + width_max) / 2.0), 2)
-    else:
-        width = np.round(width_min + (traffic - traffic.min()) * (width_max - width_min) / (traffic.max() - traffic.min()), 2)
-    return width
+def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
+    """
+    Calculate width array based on KFZ values using a GLOBAL mapping:
+      - tmin -> width_min
+      - tmax -> width_max
+      - in between proportional (optionally non-linear with gamma)
+
+    gamma = 1.0  -> linear
+    gamma < 1.0  -> more resolution for small flows (recommended: 0.5)
+    gamma > 1.0  -> more resolution for large flows
+    """
+    traffic = np.array([sub_dic["kfz"] for sub_dic in direction_dic.values()], dtype=float)
+
+    if traffic.size == 1 or np.isclose(tmax, tmin):
+        return np.round(np.full_like(traffic, (width_min + width_max) / 2.0), 2)
+
+    norm = (traffic - tmin) / (tmax - tmin)
+    norm = np.clip(norm, 0.0, 1.0)
+
+    widths = width_min + (norm ** gamma) * (width_max - width_min)
+    return np.round(widths, 2)
 
 def build_direction_dic(sheets, peak_idx):
     """Build direction dictionary for a given peak index from sheets."""
@@ -337,17 +350,37 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     direction_morning_dic = build_direction_dic(sheets, morning_start_idx)
     direction_afternoon_dic = build_direction_dic(sheets, afternoon_peak_start_idx)
 
-    # Calculate widths
-    width_general = calculate_width(direction_dic)
-    width_morning_peak = calculate_width(direction_morning_dic)
-    width_afternoon_peak = calculate_width(direction_afternoon_dic)
-
+    # --- Ensure consistent ordering (important!) ---
     present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
     if not present_dirnums:
         raise ValueError("No 'R*' sheets found. Nothing to plot.")
 
     present_dirs = [f"R{k}" for k in present_dirnums]
     flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]
+
+    # Reorder dictionaries so their .values() match present_dirs order
+    direction_dic = {k: direction_dic[k] for k in present_dirs}
+    direction_morning_dic = {k: direction_morning_dic[k] for k in present_dirs}
+    direction_afternoon_dic = {k: direction_afternoon_dic[k] for k in present_dirs}
+
+    # --- Global min/max across ALL three datasets ---
+    all_kfz = []
+    for d in (direction_dic, direction_morning_dic, direction_afternoon_dic):
+        all_kfz.extend(v["kfz"] for v in d.values())
+
+    tmin = float(min(all_kfz))
+    tmax = float(max(all_kfz))
+
+    # --- Calculate widths on shared scale ---
+    gamma = 0.5  # <--- more resolution; set to 1.0 for strict linear
+
+    width_general = calculate_width(direction_dic, tmin, tmax, gamma=gamma)
+    width_morning_peak = calculate_width(direction_morning_dic, tmin, tmax, gamma=gamma)
+    width_afternoon_peak = calculate_width(direction_afternoon_dic, tmin, tmax, gamma=gamma)
+
+    present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
+    if not present_dirnums:
+        raise ValueError("No 'R*' sheets found. Nothing to plot.")
 
     traffic_general = np.array([direction_dic[name]["kfz"] for name in present_dirs], dtype=float)
     traffic_morning = np.array([direction_morning_dic[name]["kfz"] for name in present_dirs], dtype=float)
