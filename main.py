@@ -327,45 +327,48 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
             Z = C + np.array([A[0], B[1]])
             add_bezier_ribbon(ax, A, B, Z, w, col)
             
+        # ---------- LABEL BEFORE START ----------
         if show_departure_labels:
             start_pid = None
             end_pid = None
 
-        if i in departing_points:
-            start_pid, end_pid = i, j
-        elif j in departing_points:
-            start_pid, end_pid = j, i
+            # only label flows that start at a departing point
+            if i in departing_points:
+                start_pid, end_pid = i, j
+            elif j in departing_points:
+                start_pid, end_pid = j, i
 
-        if start_pid is not None and start_pid in P and end_pid in P:
-            A0 = np.asarray(P[i], float)
-            B0 = np.asarray(P[j], float)
+            if start_pid is not None:
+                A0 = np.asarray(P[i], float)
+                B0 = np.asarray(P[j], float)
 
-            Astart = np.asarray(P[start_pid], float)
-            Bend = np.asarray(P[end_pid], float)
+                Astart = np.asarray(P[start_pid], float)
+                Bend   = np.asarray(P[end_pid], float)
 
-            side = pid_to_side[start_pid]
-            val = flow_val.get((i, j), None)
+                side = pid_to_side[start_pid]
+                val = flow_val.get((i, j), None)
 
-            if val is not None:
-                is_rect = tuple(sorted((i, j))) in RECT_FLOWS_U
+                if val is not None:
+                    is_rect = tuple(sorted((i, j))) in RECT_FLOWS_U
 
-                if is_rect:
-                    v = (Bend - Astart)
-                else:
-                    Z = C + np.array([A0[0], B0[1]])
-                    P1 = inward_ctrl(Z, A0, inward)
-                    P2 = inward_ctrl(Z, B0, inward)
-
-                    if start_pid == i:
-                        v = np.asarray(P1) - np.asarray(A0)
+                    if is_rect:
+                        v = (Bend - Astart)
                     else:
-                        v = np.asarray(P2) - np.asarray(B0)
+                        Z = C + np.array([A0[0], B0[1]])
+                        P1 = inward_ctrl(Z, A0, inward)
+                        P2 = inward_ctrl(Z, B0, inward)
 
-                L = np.hypot(v[0], v[1]) + 1e-12
-                u_lbl = v / L
+                        if start_pid == i:
+                            v = np.asarray(P1) - np.asarray(A0)
+                        else:
+                            v = np.asarray(P2) - np.asarray(B0)
 
-                txt = f"{int(round(val))}"
-                add_flow_label_before_start(ax, Astart, u_lbl, w, side, txt, color=col, fontsize=6)
+                    L = np.hypot(v[0], v[1]) + 1e-12
+                    u_lbl = v / L
+
+                    txt = f"{int(round(val))}"
+                    add_flow_label_before_start(ax, Astart, u_lbl, w, side, txt, color=col, fontsize=6)
+
 
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
