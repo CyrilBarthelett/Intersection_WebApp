@@ -47,36 +47,45 @@ if uploaded:
             # Success message
             st.success("Done!")
 
-                        # ------------------------------
-            # KFZ by direction (table)
             # ------------------------------
-            st.subheader("KFZ traffic by direction")
+            # KFZ | Bicycle by direction (table)
+            # ------------------------------
+            st.subheader("Traffic by direction (KFZ | Bicycle)")
 
-            df_kfz = pd.DataFrame(meta["per_direction"])
-            df_kfz = df_kfz.rename(columns={
-                "direction": "Direction",
-                "full_day_kfz": "Full day (KFZ)",
-                "morning_peak_kfz": "Morning peak (KFZ)",
-                "afternoon_peak_kfz": "Afternoon peak (KFZ)",
+            df = pd.DataFrame(meta["per_direction"])
+
+            # Make integer columns (nice display)
+            num_cols = [
+                "full_day_kfz", "full_day_bike",
+                "morning_peak_kfz", "morning_peak_bike",
+                "afternoon_peak_kfz", "afternoon_peak_bike",
+            ]
+            for c in num_cols:
+                df[c] = df[c].round(0).astype(int)
+
+            # Build the "KFZ | Bicycle" strings
+            df_out = pd.DataFrame({
+                "Direction": df["direction"],
+                "Full day (KFZ | Bicycle)": df["full_day_kfz"].astype(str) + " | " + df["full_day_bike"].astype(str),
+                "Morning peak (KFZ | Bicycle)": df["morning_peak_kfz"].astype(str) + " | " + df["morning_peak_bike"].astype(str),
+                "Afternoon peak (KFZ | Bicycle)": df["afternoon_peak_kfz"].astype(str) + " | " + df["afternoon_peak_bike"].astype(str),
             })
 
-            # optional: make numbers nicer
-            for col in ["Full day (KFZ)", "Morning peak (KFZ)", "Afternoon peak (KFZ)"]:
-                df_kfz[col] = df_kfz[col].round(0).astype(int)
+            st.dataframe(df_out, use_container_width=True, hide_index=True)
 
-            st.dataframe(df_kfz, use_container_width=True, hide_index=True)
-
-            # Optional: show totals similar to your time cards
             t1, t2, t3 = st.columns(3)
+
             with t1:
-                st.markdown("**Total full day (KFZ)**")
-                st.write(int(round(meta["totals"]["full_day_kfz"])))
+                st.markdown("**Total full day (KFZ | Bicycle)**")
+                st.write(f"{int(round(meta['totals']['full_day_kfz']))} | {int(round(meta['totals']['full_day_bike']))}")
+
             with t2:
-                st.markdown("**Total morning peak (KFZ)**")
-                st.write(int(round(meta["totals"]["morning_peak_kfz"])))
+                st.markdown("**Total morning peak (KFZ | Bicycle)**")
+                st.write(f"{int(round(meta['totals']['morning_peak_kfz']))} | {int(round(meta['totals']['morning_peak_bike']))}")
+
             with t3:
-                st.markdown("**Total afternoon peak (KFZ)**")
-                st.write(int(round(meta["totals"]["afternoon_peak_kfz"])))
+                st.markdown("**Total afternoon peak (KFZ | Bicycle)**")
+                st.write(f"{int(round(meta['totals']['afternoon_peak_kfz']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
 
             # Show time ranges
             st.subheader("Detected time ranges")

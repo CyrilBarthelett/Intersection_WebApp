@@ -274,9 +274,10 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
     tri = np.vstack([tip, base_far, base_clo])
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
 
-def create_plot(traffic, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors):
     """Create a PNG plot for given traffic and width data.
-    traffic: numpy array of flow magnitudes aligned with flows_present
+    kfz: numpy array of KFZ flow magnitudes aligned with flows_present
+    bike: numpy array of bicycle flow magnitudes aligned with flows_present
     width: numpy array of ribbon widths aligned with flows_present
     flows_present: list of (i,j) present
     present_dirs: list of sheet names ["R1","R2",...] (mostly informational)
@@ -302,7 +303,8 @@ def create_plot(traffic, width, flows_present, verkehrszählungsort, suffix, sta
     active_points = set(W.keys())
 
     # Map each flow (i,j) -> traffic value (same ordering as flows_present), only for the text of the traffic
-    flow_val = {(i, j): float(v) for (i, j), v in zip(flows_present, traffic)}
+    flow_kfz  = {(i, j): float(v) for (i, j), v in zip(flows_present, kfz)}
+    flow_bike = {(i, j): float(v) for (i, j), v in zip(flows_present, bike)}
     show_departure_labels = True
 
     # Active groups, only include points that are active
@@ -372,8 +374,9 @@ def create_plot(traffic, width, flows_present, verkehrszählungsort, suffix, sta
             if start_pid is not None:
                 Astart = np.asarray(P[start_pid], float)
                 side = pid_to_side[start_pid]
-                val = flow_val[(i,j)]
-                txt = f"{int(round(val))}"
+                kfz = flow_kfz[(i, j)]
+                bike = flow_bike[(i, j)]
+                txt = f"{int(round(kfz))} | {int(round(bike))}"
                 add_flow_label_before_start(ax, Astart, side, txt, color=col, fontsize=6)
 
     # ---------- GROUP ARROWS ----------
@@ -531,25 +534,33 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     if not present_dirnums:
         raise ValueError("No 'R*' sheets found. Nothing to plot.")
 
-    traffic_general = np.array([direction_dic[name]["kfz"] for name in present_dirs], dtype=float)
-    traffic_morning = np.array([direction_morning_dic[name]["kfz"] for name in present_dirs], dtype=float)
-    traffic_afternoon = np.array([direction_afternoon_dic[name]["kfz"] for name in present_dirs], dtype=float)
+    kfz_general = np.array([direction_dic[name]["kfz"] for name in present_dirs], dtype=float)
+    kfz_morning = np.array([direction_morning_dic[name]["kfz"] for name in present_dirs], dtype=float)
+    kfz_afternoon = np.array([direction_afternoon_dic[name]["kfz"] for name in present_dirs], dtype=float)
 
-        # ---- Per-direction KFZ values for display in Streamlit ----
+    bike_general = np.array([direction_dic[name]["rad"] for name in present_dirs], dtype=float)
+    bike_morning = np.array([direction_morning_dic[name]["rad"] for name in present_dirs], dtype=float)
+    bike_afternoon = np.array([direction_afternoon_dic[name]["rad"] for name in present_dirs], dtype=float)
+
+        # ---- Per-direction KFZ + Bicycle values for display in Streamlit ----
     per_direction = []
     for name in present_dirs:
         per_direction.append({
             "direction": name,  # e.g. "R1"
             "full_day_kfz": float(direction_dic[name]["kfz"]),
+            "full_day_bike": float(direction_dic[name]["rad"]),
             "morning_peak_kfz": float(direction_morning_dic[name]["kfz"]),
+            "morning_peak_bike": float(direction_morning_dic[name]["rad"]),
             "afternoon_peak_kfz": float(direction_afternoon_dic[name]["kfz"]),
+            "afternoon_peak_bike": float(direction_afternoon_dic[name]["rad"]),
         })
     
     # Generate three plots
     pngs = []
-    pngs.append(create_plot(traffic_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors))
-    pngs.append(create_plot(traffic_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors))
-    pngs.append(create_plot(traffic_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors))
+    pngs.append(create_plot(kfz_general, bike_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors))
+    pngs.append(create_plot(kfz_morning, bike_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors))
+    pngs.append(create_plot(kfz_afternoon, bike_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors))
+
 
     meta = {
         "location": verkehrszählungsort,
@@ -562,9 +573,13 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
 
         "per_direction": per_direction,
         "totals": {
-            "full_day_kfz": float(np.sum(traffic_general)),
-            "morning_peak_kfz": float(np.sum(traffic_morning)),
-            "afternoon_peak_kfz": float(np.sum(traffic_afternoon)),
+            "full_day_kfz": float(np.sum(kfz_general)),
+            "morning_peak_kfz": float(np.sum(kfz_morning)),
+            "afternoon_peak_kfz": float(np.sum(kfz_afternoon)),
+
+            "full_day_bike": float(sum(direction_dic[n]["rad"] for n in present_dirs)),
+            "morning_peak_bike": float(sum(direction_morning_dic[n]["rad"] for n in present_dirs)),
+            "afternoon_peak_bike": float(sum(direction_afternoon_dic[n]["rad"] for n in present_dirs)),
         }
     }
     
