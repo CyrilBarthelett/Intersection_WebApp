@@ -7,7 +7,7 @@ It supports general traffic and peak hour analysis (morning and afternoon).
 
 import io
 import re
-from typing import List, Tuple, Dict, Optional   #Type hints
+from typing import List, Tuple, Dict, Optional, Any   #Type hints
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -15,6 +15,7 @@ matplotlib.use("Agg") # Agg is a non-interactive, off-screen rendering backend, 
 import matplotlib.pyplot as plt    
 from matplotlib.patches import Polygon
 from openpyxl import load_workbook
+
 
 # --------------------- CONFIG ---------------------
 # Minimum/maximum thickness for flow bands 
@@ -43,7 +44,7 @@ RECT_FLOWS_U = {tuple(sorted(p)) for p in [(2, 17), (5, 14), (8, 23), (11, 20)]}
 # Draw params
 C = np.array([0.0, 0.0])    # center
 R = 4.0                     # radius for placing points  
-d = 1                       # distance from center line to middle point of group
+d = 1.5                       # distance from center line to middle point of group
 inward = 0.9                # inward control for bezier curves (curvature strength)
 
 FILL = "lightblue"
@@ -273,7 +274,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
     tri = np.vstack([tip, base_far, base_clo])
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
 
-def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsort, suffix, side_colors):
+def create_plot(traffic, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors):
     """Create a PNG plot for given traffic and width data.
     traffic: numpy array of flow magnitudes aligned with flows_present
     width: numpy array of ribbon widths aligned with flows_present
@@ -397,11 +398,11 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
     plt.close(fig)
 
     safe_name = re.sub(r"[^\w\-]+", "_", str(verkehrszählungsort))
-    filename = f"VZ_{safe_name}_{suffix}.png"
+    filename = f"VZ_{safe_name}_{suffix}_{start_time}_{end_time}.png"
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None) -> List[Tuple[bytes, str]]:  #Takes Excel bytes as input, Returns list of (png_bytes, filename)
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -421,24 +422,79 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     # Load sheets for peak calculation
     sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
 
+    first_R_df = None
+    
     # Find peaks
     kfz_morning_peak = 0
     kfz_afternoon_peak = 0
-    for idx in range(13, 78+1):  # sliding window of 4 rows
+    for idx in range(13, 77+1):  # sliding window of 4 rows
         kfz_block_sum = 0
+        
         for sheet_name, df in sheets.items():
             if sheet_name.startswith("R"):
+                if first_R_df is None:
+                    first_R_df = df
                 kfz_sheet_block_sum = df.iloc[idx:idx+4, 2:9].sum().sum()
                 kfz_block_sum += kfz_sheet_block_sum
                 
-                if kfz_block_sum > kfz_morning_peak and idx < 40:
-                    kfz_morning_peak = kfz_block_sum
-                    morning_start_idx = idx
+        # read time from first_R_df (stable reference)
+        if first_R_df is None:
+            raise ValueError("No R sheets found – first_R_df was never assigned")
+        time_start = first_R_df.iloc[idx, 0]
+        time_end   = first_R_df.iloc[idx+3, 0]
 
-                if kfz_block_sum > kfz_afternoon_peak and idx >= 40:
-                    kfz_afternoon_peak = kfz_block_sum
-                    afternoon_peak_start_idx = idx
+        if idx < 40 and kfz_block_sum > kfz_morning_peak:
+            kfz_morning_peak = kfz_block_sum
+            morning_time_start = time_start
+            morning_time_end = time_end
+            morning_start_idx = idx
 
+        if idx >= 40 and kfz_block_sum > kfz_afternoon_peak:
+            kfz_afternoon_peak = kfz_block_sum
+            afternoon_time_start = time_start
+            afternoon_time_end = time_end
+            afternoon_peak_start_idx = idx
+
+
+    col = 1
+    start = 13   # Excel row 14
+    end = 80     # Excel row 81 (inclusive)
+
+    first_idx = None
+    last_idx = None
+    started = False
+    if first_R_df is None:
+        raise ValueError("No R sheets found – first_R_df was never assigned")
+
+    for row_idx in range(start, end + 1):
+        current_value = first_R_df.iloc[row_idx, col]
+
+        if pd.notna(current_value) and not started:
+            first_idx = row_idx
+            last_idx = row_idx
+            started = True
+        elif pd.notna(current_value) and started:
+            last_idx = row_idx
+        elif pd.isna(current_value) and started:
+            break
+        
+    if first_idx is None or last_idx is None:
+        raise ValueError("No non-NaN data found in the specified range (rows 14–81)")
+    day_start_time = str(first_R_df.iloc[first_idx, 0]).split("-")[0]
+    day_end_time   = str(first_R_df.iloc[last_idx, 0]).split("-")[-1]
+    morning_time_start = str(morning_time_start).split("-")[0]
+    morning_time_end   = str(morning_time_end).split("-")[-1]
+
+    afternoon_time_start = str(afternoon_time_start).split("-")[0]
+    afternoon_time_end   = str(afternoon_time_end).split("-")[-1]
+    # day_start = str(day_start_time).split('-')[0]
+    # day_end_time = str(day_end_time).split('-')[1]
+
+    # morning_peak_start = str(morning_time_start).split('-')[0]
+    # morning_peak_end = str(morning_time_end).split('-')[1]
+    # afternoon_peak_start = str(afternoon_time_start).split('-')[0]
+    # afternoon_peak_end = str(afternoon_time_end).split('-')[1]
+    
     # Build peak dics
     direction_morning_dic = build_direction_dic(sheets, morning_start_idx)
     direction_afternoon_dic = build_direction_dic(sheets, afternoon_peak_start_idx)
@@ -481,8 +537,18 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
 
     # Generate three plots
     pngs = []
-    pngs.append(create_plot(traffic_general, width_general, flows_present, present_dirs, verkehrszählungsort, "full_day", side_colors))
-    pngs.append(create_plot(traffic_morning, width_morning_peak, flows_present, present_dirs, verkehrszählungsort, "morning_peak", side_colors))
-    pngs.append(create_plot(traffic_afternoon, width_afternoon_peak, flows_present, present_dirs, verkehrszählungsort, "afternoon_peak", side_colors))
+    pngs.append(create_plot(traffic_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors))
+    pngs.append(create_plot(traffic_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors))
+    pngs.append(create_plot(traffic_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors))
 
-    return pngs
+    meta = {
+    "location": verkehrszählungsort,
+    "day": {"start": day_start_time, "end": day_end_time},
+    "morning_peak": {"start": morning_time_start, "end": morning_time_end},
+    "afternoon_peak": {"start": afternoon_time_start, "end": afternoon_time_end},
+    "tmin": tmin,
+    "tmax": tmax,
+    "gamma": gamma,
+    }
+    
+    return pngs, meta

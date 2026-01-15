@@ -41,11 +41,31 @@ if uploaded:
             excel_bytes = uploaded.read()
 
             # Generate PNG images and filenames
-            png_list = generate_png_from_excel(excel_bytes, side_colors)
+            png_list, meta = generate_png_from_excel(excel_bytes, side_colors)
 
             # Success message
             st.success("Done!")
 
+            # Show time ranges
+            st.subheader("Detected time ranges")
+
+            c1, c2, c3 = st.columns(3)
+
+            with c1:
+                st.markdown("**Full day**")
+                st.write(f"Start: {meta['day']['start']}")
+                st.write(f"End:   {meta['day']['end']}")
+
+            with c2:
+                st.markdown("**Morning peak**")
+                st.write(f"Start: {meta['morning_peak']['start']}")
+                st.write(f"End:   {meta['morning_peak']['end']}")
+
+            with c3:
+                st.markdown("**Afternoon peak**")
+                st.write(f"Start: {meta['afternoon_peak']['start']}")
+                st.write(f"End:   {meta['afternoon_peak']['end']}")
+            
             # Display each generated image with download button
             for png_bytes, out_name in png_list:
                 st.image(
