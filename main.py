@@ -44,7 +44,7 @@ RECT_FLOWS_U = {tuple(sorted(p)) for p in [(2, 17), (5, 14), (8, 23), (11, 20)]}
 # Draw params
 C = np.array([0.0, 0.0])    # center
 R = 4.0                     # radius for placing points  
-d = 1.5                       # distance from center line to middle point of group
+d = 1                       # distance from center line to middle point of group
 inward = 0.9                # inward control for bezier curves (curvature strength)
 
 FILL = "lightblue"
@@ -105,6 +105,7 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
         fontsize=fontsize,
         color=color,
         zorder=50,
+        fontweight="bold",
         clip_on=False
     )
 
@@ -306,12 +307,10 @@ def place_group_variable(P, fixed_axis, fixed_val, ids, mid_val, dir_to_axis, W)
         pt[1 - fixed_axis] = mid_val + dir_to_axis * off     #Position on variable axis, works such that the center of the group lays at mid_val from center line
         P[pid] = C + pt
 
-def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10):
-    """Add an arrow for a group of slots.
-    Find the “outermost” and “innermost” ports in that group.
-    Create a base line between two boundary points.
-    Create a tip point offset outward/inward depending on outward.
-    """
+def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10,
+                    label: Optional[str] = None, label_color: str = "white",
+                    label_fontsize: int = 9):
+    """Add an arrow for a group of slots, optionally with a text label inside."""
     ids = list(group_ids)
     pts = np.array([P[i] for i in ids], float)
 
@@ -343,7 +342,21 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
     tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
 
     tri = np.vstack([tip, base_far, base_clo])
+
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
+
+    # ---- Label inside arrow ----
+    if label is not None:
+        centroid = tri.mean(axis=0)
+        ax.text(
+            centroid[0], centroid[1], label,
+            ha="center", va="center",
+            fontsize=label_fontsize,
+            color=label_color,
+            zorder=zorder + 1,
+            fontweight="bold",
+            clip_on=False
+        )
 
 def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE):
     """Create a PNG plot for given traffic and width data.
@@ -445,20 +458,33 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
             if start_pid is not None:
                 Astart = np.asarray(P[start_pid], float)
                 side = pid_to_side[start_pid]
-                kfz = flow_kfz[(i, j)]
-                bike = flow_bike[(i, j)]
-                txt = f"{int(round(kfz))} | {int(round(bike))}"
+                kfz_val = flow_kfz[(i, j)]
+                bike_val = flow_bike[(i, j)]
+                txt = f"{int(round(kfz_val))} | {int(round(bike_val))}"
                 add_flow_label_before_start(ax, Astart, side, txt, color=col, fontsize=6)
 
     # ---------- GROUP ARROWS ----------
+    side_sums = compute_side_sums(flows_present, kfz)
+    dep_kfz_by_side = side_sums["dep_kfz"]
+    arr_kfz_by_side = side_sums["arr_kfz"]
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
         if len(ids_dep) >= 2:
-            add_group_arrow(ax, P, W, ids_dep, side, outward=False)
+            dep_label = str(int(round(dep_kfz_by_side.get(side, 0.0))))
+            add_group_arrow(
+                ax, P, W, ids_dep, side,
+                outward=False, color="k",
+                label=dep_label, label_color="white", label_fontsize=6
+            )
 
         ids_arr = GROUP_ACTIVE[(side, "arr")]
         if len(ids_arr) >= 2:
-            add_group_arrow(ax, P, W, ids_arr, side, outward=True)
+            arr_label = str(int(round(arr_kfz_by_side.get(side, 0.0))))
+            add_group_arrow(
+                ax, P, W, ids_arr, side,
+                outward=True, color="k",
+                label=arr_label, label_color="white", label_fontsize=6
+            )
 
     ax.set_aspect("equal", adjustable="box")
     pad = 1.4
@@ -476,7 +502,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1.5, d_WE: float = 1.5) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -613,7 +639,8 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     bike_morning = np.array([direction_morning_dic[name]["rad"] for name in present_dirs], dtype=float)
     bike_afternoon = np.array([direction_afternoon_dic[name]["rad"] for name in present_dirs], dtype=float)
 
-    side_general = compute_side_sums(flows_present, kfz_general, bike_general)
+    #Number of KFZ per side: {"dep_kfz": dep_kfz, "arr_kfz": arr_kfz, "total_kfz": total_kfz}
+    side_general = compute_side_sums(flows_present, kfz_general, bike_general) 
     side_morning = compute_side_sums(flows_present, kfz_morning, bike_morning)
     side_afternoon = compute_side_sums(flows_present, kfz_afternoon, bike_afternoon)
 

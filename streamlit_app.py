@@ -32,7 +32,7 @@ d_NS_value = st.sidebar.slider(
     min_value=0.5,
     max_value=3.0,
     value=1.5,
-    step=0.1,
+    step=0.05,
     help="Distance from center line to the middle of each flow group"
 )
 d_WE_value = st.sidebar.slider(
@@ -40,7 +40,7 @@ d_WE_value = st.sidebar.slider(
     min_value=0.5,
     max_value=3.0,
     value=1.5,
-    step=0.1,
+    step=0.05,
     help="Distance from center line to the middle of each flow group"
 )
 
