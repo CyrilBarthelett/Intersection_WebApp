@@ -108,6 +108,77 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
         clip_on=False
     )
 
+def compute_side_sums(flows_present, kfz_array, bike_array=None):
+    """
+    Compute sums per side for departing and arriving traffic.
+
+    Returns:
+      dep_kfz, arr_kfz, total_kfz
+      and if bike_array provided: dep_bike, arr_bike, total_bike
+    """
+
+    # Map port id -> side for dep and arr ports
+    dep_pid_to_side = {}
+    arr_pid_to_side = {}
+    for side in ("N", "E", "S", "W"):
+        for pid in GROUP_SLOTS[(side, "dep")]:
+            dep_pid_to_side[pid] = side
+        for pid in GROUP_SLOTS[(side, "arr")]:
+            arr_pid_to_side[pid] = side
+
+    dep_kfz = {s: 0.0 for s in ("N", "E", "S", "W")}
+    arr_kfz = {s: 0.0 for s in ("N", "E", "S", "W")}
+
+    dep_bike = {s: 0.0 for s in ("N", "E", "S", "W")} if bike_array is not None else None
+    arr_bike = {s: 0.0 for s in ("N", "E", "S", "W")} if bike_array is not None else None
+
+    # --- KFZ sums ---
+    for (i, j), kfz in zip(flows_present, kfz_array):
+        if i in dep_pid_to_side and j in arr_pid_to_side:
+            dep_side = dep_pid_to_side[i]
+            arr_side = arr_pid_to_side[j]
+        elif j in dep_pid_to_side and i in arr_pid_to_side:
+            dep_side = dep_pid_to_side[j]
+            arr_side = arr_pid_to_side[i]
+        else:
+            continue
+
+        dep_kfz[dep_side] += float(kfz)
+        arr_kfz[arr_side] += float(kfz)
+
+    total_kfz = {s: dep_kfz[s] + arr_kfz[s] for s in ("N", "E", "S", "W")}
+
+    # --- Bike sums (optional) ---
+    if bike_array is not None:
+        for (i, j), bike in zip(flows_present, bike_array):
+            if i in dep_pid_to_side and j in arr_pid_to_side:
+                dep_side = dep_pid_to_side[i]
+                arr_side = arr_pid_to_side[j]
+            elif j in dep_pid_to_side and i in arr_pid_to_side:
+                dep_side = dep_pid_to_side[j]
+                arr_side = arr_pid_to_side[i]
+            else:
+                continue
+
+            dep_bike[dep_side] += float(bike)
+            arr_bike[arr_side] += float(bike)
+
+        total_bike = {s: dep_bike[s] + arr_bike[s] for s in ("N", "E", "S", "W")}
+
+        return {
+            "dep_kfz": dep_kfz,
+            "arr_kfz": arr_kfz,
+            "total_kfz": total_kfz,
+            "dep_bike": dep_bike,
+            "arr_bike": arr_bike,
+            "total_bike": total_bike,
+        }
+
+    return {
+        "dep_kfz": dep_kfz,
+        "arr_kfz": arr_kfz,
+        "total_kfz": total_kfz,
+    }
 
 def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
     """
@@ -542,6 +613,10 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     bike_morning = np.array([direction_morning_dic[name]["rad"] for name in present_dirs], dtype=float)
     bike_afternoon = np.array([direction_afternoon_dic[name]["rad"] for name in present_dirs], dtype=float)
 
+    side_general = compute_side_sums(flows_present, kfz_general, bike_general)
+    side_morning = compute_side_sums(flows_present, kfz_morning, bike_morning)
+    side_afternoon = compute_side_sums(flows_present, kfz_afternoon, bike_afternoon)
+
         # ---- Per-direction KFZ + Bicycle values for display in Streamlit ----
     per_direction = []
     for name in present_dirs:
@@ -580,6 +655,12 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             "full_day_bike": float(sum(direction_dic[n]["rad"] for n in present_dirs)),
             "morning_peak_bike": float(sum(direction_morning_dic[n]["rad"] for n in present_dirs)),
             "afternoon_peak_bike": float(sum(direction_afternoon_dic[n]["rad"] for n in present_dirs)),
+        },
+        
+        "by_side": {
+        "full_day": side_general,
+        "morning_peak": side_morning,
+        "afternoon_peak": side_afternoon,
         }
     }
     

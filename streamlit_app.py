@@ -86,6 +86,15 @@ if uploaded:
             with t3:
                 st.markdown("**Total afternoon peak (KFZ | Bicycle)**")
                 st.write(f"{int(round(meta['totals']['afternoon_peak_kfz']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
+                
+            bd = meta["by_side"]["full_day"]
+            df_side = pd.DataFrame({
+                "Side": ["N", "E", "S", "W"],
+                "Departing KFZ": [int(round(bd["dep_kfz"][s])) for s in ["N","E","S","W"]],
+                "Arriving KFZ":  [int(round(bd["arr_kfz"][s])) for s in ["N","E","S","W"]],
+                "Total KFZ":  [int(round(bd["total_kfz"][s])) for s in ["N","E","S","W"]],
+            })
+            st.dataframe(df_side, use_container_width=True, hide_index=True)
 
             # Show time ranges
             st.subheader("Detected time ranges")
