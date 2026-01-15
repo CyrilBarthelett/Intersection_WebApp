@@ -7,16 +7,17 @@ It supports general traffic and peak hour analysis (morning and afternoon).
 
 import io
 import re
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional   #Type hints
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg") 
-import matplotlib.pyplot as plt
+matplotlib.use("Agg") # Agg is a non-interactive, off-screen rendering backend, Plots are rendered directly to image file
+import matplotlib.pyplot as plt    
 from matplotlib.patches import Polygon
 from openpyxl import load_workbook
 
 # --------------------- CONFIG ---------------------
+# Minimum/maximum thickness for flow bands 
 width_min = 0.1
 width_max = 0.7
 
@@ -41,15 +42,16 @@ RECT_FLOWS_U = {tuple(sorted(p)) for p in [(2, 17), (5, 14), (8, 23), (11, 20)]}
 
 # Draw params
 C = np.array([0.0, 0.0])    # center
-R = 4.0
-d = 1
-inward = 0.9
+R = 4.0                     # radius for placing points  
+d = 1                       # distance from center line to middle point of group
+inward = 0.9                # inward control for bezier curves (curvature strength)
 
 FILL = "lightblue"
 EDGE = "none"
 EDGE_LW = 0.0
 
 # Group slots
+# Dict mapping (side, type) → list of port IDs
 GROUP_SLOTS = {
     ("N", "dep"): [1, 2, 3],
     ("N", "arr"): [6, 5, 4],
@@ -64,32 +66,34 @@ GROUP_SLOTS = {
     ("W", "arr"): [24, 23, 22],
 }
 
+# Dict side → Matplotlib color name.
 SIDE_COLOR = {"N": "tab:blue", "E": "tab:orange", "S": "tab:green", "W": "tab:red"}
 
-def add_flow_label_before_start(ax, A, u_flow, w, side, text, color, fontsize=6):
-    A = np.asarray(A, float)
+def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
+    """Adds a the traffic near the start of the corresponding flow, before the flow begins"""
+    A = np.asarray(A, float)        #Ensures A is a numpy float array.
 
-    back = 0.15
+    back = 0.15                     #How far outside the port the label sits
 
-    # Use a direction for where "before start" is located.
-    # If you force axis-aligned text, also place it axis-aligned.
+    #Locate start position and orientation based on side
     if side == "E":
-        u_pos = np.array([1.0, 0.0])     # move outward to the right
+        u_pos = np.array([1.0, 0.0])    
         angle_deg = 0
         ha, va = "left", "center"
     elif side == "W":
-        u_pos = np.array([-1.0, 0.0])    # move outward to the left
+        u_pos = np.array([-1.0, 0.0])    
         angle_deg = 0
         ha, va = "right", "center"
     elif side == "N":
-        u_pos = np.array([0.0, 1.0])     # move outward up
-        angle_deg = -90                  # readable N -> S
+        u_pos = np.array([0.0, 1.0])     
+        angle_deg = -90                  
         ha, va = "right", "center"
     else:  # "S"
-        u_pos = np.array([0.0, -1.0])    # move outward down
+        u_pos = np.array([0.0, -1.0])    
         angle_deg = -90
         ha, va = "left", "center"
 
+    #Final label position
     pos = A + back * u_pos
 
     ax.text(
@@ -109,30 +113,30 @@ def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
     Calculate width array based on KFZ values using a GLOBAL mapping:
       - tmin -> width_min
       - tmax -> width_max
-      - in between proportional (optionally non-linear with gamma)
+      - in between proportional (non-linear with gamma)
 
     gamma = 1.0  -> linear
     gamma < 1.0  -> more resolution for small flows (recommended: 0.5)
     gamma > 1.0  -> more resolution for large flows
     """
-    traffic = np.array([sub_dic["kfz"] for sub_dic in direction_dic.values()], dtype=float)
+    traffic = np.array([sub_dic["kfz"] for sub_dic in direction_dic.values()], dtype=float)  #Extracts all kfz values from the dictionary (in iteration order)
 
-    if traffic.size == 1 or np.isclose(tmax, tmin):
+    if traffic.size == 1 or np.isclose(tmax, tmin):     #If only one flow or all flows equal (no scale), give them all mid-width
         return np.round(np.full_like(traffic, (width_min + width_max) / 2.0), 2)
 
-    norm = (traffic - tmin) / (tmax - tmin)
-    norm = np.clip(norm, 0.0, 1.0)
+    norm = (traffic - tmin) / (tmax - tmin)     #Normalize to [0,1]
+    norm = np.clip(norm, 0.0, 1.0)      #Ensure norm within [0,1]
 
-    widths = width_min + (norm ** gamma) * (width_max - width_min)
-    return np.round(widths, 2)
+    widths = width_min + (norm ** gamma) * (width_max - width_min)      #Scale to [width_min, width_max] using gamma correction
+    return np.round(widths, 2)      #Returns all widths 
 
 def build_direction_dic(sheets, peak_idx):
-    """Build direction dictionary for a given peak index from sheets."""
+    """Build direction dictionary for a given peak index from sheets starting with R."""
     dic = {}
-    for sheet_name, df in sheets.items():
-        if sheet_name.startswith("R"):
-            kfz_sum = df.iloc[peak_idx:peak_idx+4, 2:9].sum().sum()
-            total_sum = df.iloc[peak_idx:peak_idx+4, 1:9].sum().sum()
+    for sheet_name, df in sheets.items():       #Iterate over all sheets
+        if sheet_name.startswith("R"):          #Only process sheets starting with "R"
+            kfz_sum = df.iloc[peak_idx:peak_idx+4, 2:9].sum().sum()     #Sum kfz values in the specified range (4 rows starting at peak_idx, columns 2 to 8)
+            total_sum = df.iloc[peak_idx:peak_idx+4, 1:9].sum().sum()   #Sum total values (kfz + rad) in the specified range (4 rows starting at peak_idx, columns 1 to 8)
             dic[sheet_name] = {
                 "total": total_sum,
                 "kfz": kfz_sum,
@@ -199,27 +203,43 @@ def add_bezier_ribbon(ax, A, B, Z, width, color):
     add_patch(ax, poly, color)
 
 def place_group_variable(P, fixed_axis, fixed_val, ids, mid_val, dir_to_axis, W):
-    """Place points for a group of slots."""
-    if not ids:
+    """Place points for a group of slots.
+    - fixed axis: 0 for x fixed, 1 for y fixed
+    - fixed val: value on fixed axis 
+        (N: fixed axis = 1, fixed_val = +R, 
+         S: fixed axis = 1, fixed_val = -R,
+         E: fixed axis = 0, fixed_val = +R,
+         W: fixed axis = 0, fixed_val = -R)
+    - ids: list of point IDs ([1,2,3], etc.)
+    - mid_val: midpoint value on the variable axis (+d or -d)
+    - dir_to_axis: direction to the center axis (1 or -1)
+    - W: width dictionary
+    """
+    if not ids: #if group empty, exit 
         return
 
-    widths = [W[i] for i in ids]
-    span = sum(widths)
+    widths = [W[i] for i in ids]      #Get widths for all points in the group, order matter, determines left-to-right placement
+    span = sum(widths)                #Total span of the group (sum of widths)
 
     offsets = []
-    acc = -span / 2.0
+    acc = -span / 2.0                  #Start at negative half-span, running currently accumulated offset
     for w in widths:
         offsets.append(acc + w / 2.0)
         acc += w
 
+    #Point placement
     for pid, off in zip(ids, offsets):
         pt = np.array([0.0, 0.0], float)
         pt[fixed_axis] = fixed_val
-        pt[1 - fixed_axis] = mid_val + dir_to_axis * off
+        pt[1 - fixed_axis] = mid_val + dir_to_axis * off     #Position on variable axis, works such that the center of the group lays at mid_val from center line
         P[pid] = C + pt
 
 def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10):
-    """Add an arrow for a group of slots."""
+    """Add an arrow for a group of slots.
+    Find the “outermost” and “innermost” ports in that group.
+    Create a base line between two boundary points.
+    Create a tip point offset outward/inward depending on outward.
+    """
     ids = list(group_ids)
     pts = np.array([P[i] for i in ids], float)
 
@@ -254,42 +274,53 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
 
 def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsort, suffix, side_colors):
-    """Create a PNG plot for given traffic and width data."""
+    """Create a PNG plot for given traffic and width data.
+    traffic: numpy array of flow magnitudes aligned with flows_present
+    width: numpy array of ribbon widths aligned with flows_present
+    flows_present: list of (i,j) present
+    present_dirs: list of sheet names ["R1","R2",...] (mostly informational)
+    verkehrszählungsort: location name from Excel
+    suffix: string for filename (full_day, morning_peak, ...)
+    side_colors: optional dict overriding SIDE_COLOR
+    """
     # Update SIDE_COLOR with user-provided side_colors
     if side_colors:
         SIDE_COLOR.update(side_colors)
 
     # Width mapping already done
     flow_width = {(i, j): w for (i, j), w in zip(flows_present, width)}
+    
+    #Example: flows_present = [(1,24),(2,17),(3,10),(6,7)]
+    #         width         = [0.65,    0.30,   0.15,  0.55]
+    #         flow_width = {(1,24): 0.65, (2,17): 0.30, (3,10): 0.15, (6,7) : 0.55}
 
-    # Point widths
+    # Assigns a width to each port ID
     W = {}
     for (i, j), w in flow_width.items():
-        W[i] = w
-        W[j] = w
+        W[i], W[j] = w, w
     active_points = set(W.keys())
 
-    # Map each flow (i,j) -> traffic value (same ordering as flows_present)
+    # Map each flow (i,j) -> traffic value (same ordering as flows_present), only for the text of the traffic
     flow_val = {(i, j): float(v) for (i, j), v in zip(flows_present, traffic)}
     show_departure_labels = True
 
-    # Active groups
+    # Active groups, only include points that are active
     GROUP_ACTIVE = {
         key: [pid for pid in values if pid in active_points]
         for key, values in GROUP_SLOTS.items()
     }
 
     # Colors
-    departing_points = set()
-    pid_to_side = {}          # NEW: point id -> "N"/"E"/"S"/"W"
+    departing_points = set()  
+    pid_to_side = {}      
     point_to_color = {}
     for side in ("N", "E", "S", "W"):
         for p in GROUP_ACTIVE[(side, "dep")]:
-            departing_points.add(p)
-            pid_to_side[p] = side          # NEW
-            point_to_color[p] = SIDE_COLOR[side]
+            departing_points.add(p)                 #Add departing point to set
+            pid_to_side[p] = side                   #Map port ID to side
+            point_to_color[p] = SIDE_COLOR[side]    #Map port ID to color
 
-    def flow_color(i, j, default="lightblue"):
+    def flow_color(i, j, default="lightblue"):      #Determine flow color based on departing points
         if i in departing_points:
             return point_to_color[i]
         if j in departing_points:
@@ -311,7 +342,7 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
     place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","arr")], +d, -1, W)
 
     # Plot
-    fig, ax = plt.subplots(figsize=(10, 10))
+    fig, ax = plt.subplots(figsize=(10, 10))  #fig is the whole image canvas, ax is the coordinate system where shapes are drawn
 
     for (i, j) in flows_present:
         if i not in P or j not in P:
@@ -330,46 +361,21 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
         # ---------- LABEL BEFORE START ----------
         if show_departure_labels:
             start_pid = None
-            end_pid = None
 
             # only label flows that start at a departing point
             if i in departing_points:
-                start_pid, end_pid = i, j
+                start_pid = i
             elif j in departing_points:
-                start_pid, end_pid = j, i
+                start_pid = j
 
             if start_pid is not None:
-                A0 = np.asarray(P[i], float)
-                B0 = np.asarray(P[j], float)
-
                 Astart = np.asarray(P[start_pid], float)
-                Bend   = np.asarray(P[end_pid], float)
-
                 side = pid_to_side[start_pid]
-                val = flow_val.get((i, j), None)
+                val = flow_val[(i,j)]
+                txt = f"{int(round(val))}"
+                add_flow_label_before_start(ax, Astart, side, txt, color=col, fontsize=6)
 
-                if val is not None:
-                    is_rect = tuple(sorted((i, j))) in RECT_FLOWS_U
-
-                    if is_rect:
-                        v = (Bend - Astart)
-                    else:
-                        Z = C + np.array([A0[0], B0[1]])
-                        P1 = inward_ctrl(Z, A0, inward)
-                        P2 = inward_ctrl(Z, B0, inward)
-
-                        if start_pid == i:
-                            v = np.asarray(P1) - np.asarray(A0)
-                        else:
-                            v = np.asarray(P2) - np.asarray(B0)
-
-                    L = np.hypot(v[0], v[1]) + 1e-12
-                    u_lbl = v / L
-
-                    txt = f"{int(round(val))}"
-                    add_flow_label_before_start(ax, Astart, u_lbl, w, side, txt, color=col, fontsize=6)
-
-
+    # ---------- GROUP ARROWS ----------
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
         if len(ids_dep) >= 2:
@@ -386,7 +392,7 @@ def create_plot(traffic, width, flows_present, present_dirs, verkehrszählungsor
     ax.set_axis_off()
 
     # Return PNG bytes (no filesystem)
-    buf = io.BytesIO()
+    buf = io.BytesIO()                  #raw bytes like a file (so you can read Excel and write PNGs without saving to disk)
     fig.savefig(buf, format="png", transparent=True, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
@@ -418,7 +424,7 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     # Find peaks
     kfz_morning_peak = 0
     kfz_afternoon_peak = 0
-    for idx in range(13, 77+1):  # sliding window of 4 rows
+    for idx in range(13, 78+1):  # sliding window of 4 rows
         kfz_block_sum = 0
         for sheet_name, df in sheets.items():
             if sheet_name.startswith("R"):
@@ -438,12 +444,12 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     direction_afternoon_dic = build_direction_dic(sheets, afternoon_peak_start_idx)
 
     # --- Ensure consistent ordering (important!) ---
-    present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
+    present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys()) #Convert "R1" → 1, etc, and sorts
     if not present_dirnums:
         raise ValueError("No 'R*' sheets found. Nothing to plot.")
 
-    present_dirs = [f"R{k}" for k in present_dirnums]
-    flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]
+    present_dirs = [f"R{k}" for k in present_dirnums]       #ordered list of sheet names
+    flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]       #ordered list of edges (i,j) matching those directions
 
     # Reorder dictionaries so their .values() match present_dirs order
     direction_dic = {k: direction_dic[k] for k in present_dirs}
