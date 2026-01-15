@@ -109,6 +109,134 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
         clip_on=False
     )
 
+def add_side_span_line_and_total(
+    ax,
+    P,
+    W,                 # <-- add W so we can use half-widths
+    dep_ids,
+    arr_ids,
+    side,
+    total_text,
+    d_NS,
+    d_WE,
+    line_lw=3,
+    line_color="black",
+    text_color="black",
+    text_fontsize=18,
+    offset_line=0.9,
+    offset_text=1.2,
+    zorder=40,
+):
+    """
+    Draw a span line between the two most outward edges of a side considering BOTH dep+arr ports.
+    Outward edges are computed as coordinate +/- (W[pid]/2) along the variable axis.
+
+    If dep or arr group is missing, synthesize the missing group by shifting the existing group
+    by +/- 2*d along the variable axis (keeping same widths).
+
+    Text is horizontal for N/S and vertical (top->bottom) for E/W.
+    """
+
+    # Determine variable axis + outward normal + dep<->arr shift
+    if side in ("N", "S"):
+        var_axis = 0  # x varies
+        other_axis = 1
+        nrm = np.array([0.0, +1.0]) if side == "N" else np.array([0.0, -1.0])
+        shift = 2.0 * float(d_NS)
+    else:
+        var_axis = 1  # y varies
+        other_axis = 0
+        nrm = np.array([+1.0, 0.0]) if side == "E" else np.array([-1.0, 0.0])
+        shift = 2.0 * float(d_WE)
+
+    dep_ids = list(dep_ids) if dep_ids else []
+    arr_ids = list(arr_ids) if arr_ids else []
+
+    # Collect all real points (must have at least 2)
+    real_pids = [pid for pid in (dep_ids + arr_ids) if pid in P and pid in W]
+    if len(real_pids) < 2:
+        return
+
+    # We will build a list of "edge extents" along var_axis:
+    # each item is (min_edge, max_edge, other_coord)
+    extents = []
+
+    def add_pid_extent(pid, delta_var=0.0):
+        pt = np.array(P[pid], float).copy()
+        pt[var_axis] += delta_var
+        half = float(W[pid]) / 2.0
+        min_edge = float(pt[var_axis] - half)
+        max_edge = float(pt[var_axis] + half)
+        extents.append((min_edge, max_edge, float(pt[other_axis])))
+
+    # Add real extents
+    for pid in real_pids:
+        add_pid_extent(pid, delta_var=0.0)
+
+    # If one group missing, synthesize by shifting the existing group's points
+    if len(dep_ids) == 0 and len(arr_ids) > 0:
+        for pid in arr_ids:
+            if pid in P and pid in W:
+                add_pid_extent(pid, delta_var=-shift)
+
+    if len(arr_ids) == 0 and len(dep_ids) > 0:
+        for pid in dep_ids:
+            if pid in P and pid in W:
+                add_pid_extent(pid, delta_var=+shift)
+
+    if len(extents) < 2:
+        return
+
+    # Global min/max edges across all extents
+    min_edge = min(e[0] for e in extents)
+    max_edge = max(e[1] for e in extents)
+
+    # Choose a stable coordinate on the other axis (average works well)
+    other_mean = float(np.mean([e[2] for e in extents]))
+
+    # Build line endpoints in data coords
+    p1 = np.array([0.0, 0.0])
+    p2 = np.array([0.0, 0.0])
+    p1[var_axis] = min_edge
+    p2[var_axis] = max_edge
+    p1[other_axis] = other_mean
+    p2[other_axis] = other_mean
+
+    # Push line outward
+    p1_line = p1 + offset_line * nrm
+    p2_line = p2 + offset_line * nrm
+
+    ax.plot(
+        [p1_line[0], p2_line[0]],
+        [p1_line[1], p2_line[1]],
+        linewidth=line_lw,
+        color=line_color,
+        solid_capstyle="round",
+        zorder=zorder,
+        clip_on=False,
+    )
+
+    # Text position: midpoint, pushed further outward
+    mid = 0.5 * (p1 + p2)
+    pos_text = mid + offset_text * nrm
+
+    # Rotation: E/W should read North -> South (top -> bottom)
+    rotation = 270 if side in ("E", "W") else 0
+
+    ax.text(
+        pos_text[0], pos_text[1],
+        str(total_text),
+        ha="center", va="center",
+        fontsize=text_fontsize,
+        color=text_color,
+        fontweight="bold",
+        rotation=rotation,
+        rotation_mode="anchor",
+        zorder=zorder + 1,
+        clip_on=False,
+    )
+
+
 def compute_side_sums(flows_present, kfz_array, bike_array=None):
     """
     Compute sums per side for departing and arriving traffic.
@@ -467,6 +595,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     side_sums = compute_side_sums(flows_present, kfz)
     dep_kfz_by_side = side_sums["dep_kfz"]
     arr_kfz_by_side = side_sums["arr_kfz"]
+    total_kfz_by_side = side_sums["total_kfz"]
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
         if len(ids_dep) >= 2:
@@ -485,6 +614,22 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
                 outward=True, color="k",
                 label=arr_label, label_color="white", label_fontsize=6
             )
+            total_val = int(round(total_kfz_by_side.get(side, 0.0)))
+            add_side_span_line_and_total(
+                    ax,
+                    P,
+                    W,
+                    dep_ids=ids_dep,
+                    arr_ids=ids_arr,
+                    side=side,
+                    total_text=total_val,
+                    d_NS=d_NS,
+                    d_WE=d_WE,
+                    line_lw=3,
+                    text_fontsize=18,
+                    offset_line=0.9,
+                    offset_text=1.25,
+                )
 
     ax.set_aspect("equal", adjustable="box")
     pad = 1.4
