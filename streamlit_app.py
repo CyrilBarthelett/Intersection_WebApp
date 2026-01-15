@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from main import generate_png_from_excel
 
 #Run using the command: python -m streamlit run streamlit_app.py
@@ -45,6 +46,37 @@ if uploaded:
 
             # Success message
             st.success("Done!")
+
+                        # ------------------------------
+            # KFZ by direction (table)
+            # ------------------------------
+            st.subheader("KFZ traffic by direction")
+
+            df_kfz = pd.DataFrame(meta["per_direction"])
+            df_kfz = df_kfz.rename(columns={
+                "direction": "Direction",
+                "full_day_kfz": "Full day (KFZ)",
+                "morning_peak_kfz": "Morning peak (KFZ)",
+                "afternoon_peak_kfz": "Afternoon peak (KFZ)",
+            })
+
+            # optional: make numbers nicer
+            for col in ["Full day (KFZ)", "Morning peak (KFZ)", "Afternoon peak (KFZ)"]:
+                df_kfz[col] = df_kfz[col].round(0).astype(int)
+
+            st.dataframe(df_kfz, use_container_width=True, hide_index=True)
+
+            # Optional: show totals similar to your time cards
+            t1, t2, t3 = st.columns(3)
+            with t1:
+                st.markdown("**Total full day (KFZ)**")
+                st.write(int(round(meta["totals"]["full_day_kfz"])))
+            with t2:
+                st.markdown("**Total morning peak (KFZ)**")
+                st.write(int(round(meta["totals"]["morning_peak_kfz"])))
+            with t3:
+                st.markdown("**Total afternoon peak (KFZ)**")
+                st.write(int(round(meta["totals"]["afternoon_peak_kfz"])))
 
             # Show time ranges
             st.subheader("Detected time ranges")

@@ -535,6 +535,16 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     traffic_morning = np.array([direction_morning_dic[name]["kfz"] for name in present_dirs], dtype=float)
     traffic_afternoon = np.array([direction_afternoon_dic[name]["kfz"] for name in present_dirs], dtype=float)
 
+        # ---- Per-direction KFZ values for display in Streamlit ----
+    per_direction = []
+    for name in present_dirs:
+        per_direction.append({
+            "direction": name,  # e.g. "R1"
+            "full_day_kfz": float(direction_dic[name]["kfz"]),
+            "morning_peak_kfz": float(direction_morning_dic[name]["kfz"]),
+            "afternoon_peak_kfz": float(direction_afternoon_dic[name]["kfz"]),
+        })
+    
     # Generate three plots
     pngs = []
     pngs.append(create_plot(traffic_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors))
@@ -542,13 +552,20 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     pngs.append(create_plot(traffic_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors))
 
     meta = {
-    "location": verkehrszählungsort,
-    "day": {"start": day_start_time, "end": day_end_time},
-    "morning_peak": {"start": morning_time_start, "end": morning_time_end},
-    "afternoon_peak": {"start": afternoon_time_start, "end": afternoon_time_end},
-    "tmin": tmin,
-    "tmax": tmax,
-    "gamma": gamma,
+        "location": verkehrszählungsort,
+        "day": {"start": day_start_time, "end": day_end_time},
+        "morning_peak": {"start": morning_time_start, "end": morning_time_end},
+        "afternoon_peak": {"start": afternoon_time_start, "end": afternoon_time_end},
+        "tmin": tmin,
+        "tmax": tmax,
+        "gamma": gamma,
+
+        "per_direction": per_direction,
+        "totals": {
+            "full_day_kfz": float(np.sum(traffic_general)),
+            "morning_peak_kfz": float(np.sum(traffic_morning)),
+            "afternoon_peak_kfz": float(np.sum(traffic_afternoon)),
+        }
     }
     
     return pngs, meta
