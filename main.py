@@ -345,7 +345,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
     tri = np.vstack([tip, base_far, base_clo])
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
 
-def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE):
     """Create a PNG plot for given traffic and width data.
     kfz: numpy array of KFZ flow magnitudes aligned with flows_present
     bike: numpy array of bicycle flow magnitudes aligned with flows_present
@@ -403,17 +403,17 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
 
     # Place points
     P = {}
-    place_group_variable(P, 1, +R, GROUP_ACTIVE[("N","dep")], -d, +1, W)
-    place_group_variable(P, 1, +R, GROUP_ACTIVE[("N","arr")], +d, -1, W)
+    place_group_variable(P, 1, +R, GROUP_ACTIVE[("N","dep")], -d_NS, +1, W)
+    place_group_variable(P, 1, +R, GROUP_ACTIVE[("N","arr")], +d_NS, -1, W)
 
-    place_group_variable(P, 0, +R, GROUP_ACTIVE[("E","dep")], +d, -1, W)
-    place_group_variable(P, 0, +R, GROUP_ACTIVE[("E","arr")], -d, +1, W)
+    place_group_variable(P, 0, +R, GROUP_ACTIVE[("E","dep")], +d_WE, -1, W)
+    place_group_variable(P, 0, +R, GROUP_ACTIVE[("E","arr")], -d_WE, +1, W)
 
-    place_group_variable(P, 1, -R, GROUP_ACTIVE[("S","dep")], +d, -1, W)
-    place_group_variable(P, 1, -R, GROUP_ACTIVE[("S","arr")], -d, +1, W)
+    place_group_variable(P, 1, -R, GROUP_ACTIVE[("S","dep")], +d_NS, -1, W)
+    place_group_variable(P, 1, -R, GROUP_ACTIVE[("S","arr")], -d_NS, +1, W)
 
-    place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","dep")], -d, +1, W)
-    place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","arr")], +d, -1, W)
+    place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","dep")], -d_WE, +1, W)
+    place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","arr")], +d_WE, -1, W)
 
     # Plot
     fig, ax = plt.subplots(figsize=(10, 10))  #fig is the whole image canvas, ax is the coordinate system where shapes are drawn
@@ -476,7 +476,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1.5, d_WE: float = 1.5) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -588,8 +588,8 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
 
     # --- Global min/max across ALL three datasets ---
     all_kfz = []
-    for d in (direction_dic, direction_morning_dic, direction_afternoon_dic):
-        all_kfz.extend(v["kfz"] for v in d.values())
+    for dir in (direction_dic, direction_morning_dic, direction_afternoon_dic):
+        all_kfz.extend(v["kfz"] for v in dir.values())
 
     tmin = float(min(all_kfz))
     tmax = float(max(all_kfz))
@@ -632,9 +632,9 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     
     # Generate three plots
     pngs = []
-    pngs.append(create_plot(kfz_general, bike_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors))
-    pngs.append(create_plot(kfz_morning, bike_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors))
-    pngs.append(create_plot(kfz_afternoon, bike_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors))
+    pngs.append(create_plot(kfz_general, bike_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors, d_NS, d_WE))
+    pngs.append(create_plot(kfz_morning, bike_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors, d_NS, d_WE))
+    pngs.append(create_plot(kfz_afternoon, bike_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors, d_NS, d_WE))
 
 
     meta = {

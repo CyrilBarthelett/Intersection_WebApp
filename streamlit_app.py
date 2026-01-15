@@ -26,6 +26,24 @@ w_color = st.sidebar.color_picker("West", "#d62728")
 
 side_colors = {"N": n_color, "E": e_color, "S": s_color, "W": w_color}
 
+st.sidebar.header("Layout")
+d_NS_value = st.sidebar.slider(
+    "North-South: Distance between arriving and departing flows",
+    min_value=0.5,
+    max_value=3.0,
+    value=1.5,
+    step=0.1,
+    help="Distance from center line to the middle of each flow group"
+)
+d_WE_value = st.sidebar.slider(
+    "East-West: Distance between arriving and departing flows",
+    min_value=0.5,
+    max_value=3.0,
+    value=1.5,
+    step=0.1,
+    help="Distance from center line to the middle of each flow group"
+)
+
 # --------------------------------------------------
 # File uploader widget
 # --------------------------------------------------
@@ -42,7 +60,7 @@ if uploaded:
             excel_bytes = uploaded.read()
 
             # Generate PNG images and filenames
-            png_list, meta = generate_png_from_excel(excel_bytes, side_colors)
+            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value)
 
             # Success message
             st.success("Done!")
