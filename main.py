@@ -52,7 +52,6 @@ C = np.array([0.0, 0.0])    # center
 R = 4.0                     # radius for placing points  
 d = 1                       # distance from center line to middle point of group
 inward = 0.9                # inward control for bezier curves (curvature strength)
-# PKW_Einheiten = False       # Whether to compute PKW_Einheiten flows instead of KFZ
 
 FILL = "lightblue"
 EDGE = "none"
@@ -301,10 +300,12 @@ def build_direction_dic(sheets, peak_idx):
         if sheet_name.startswith("R"):          #Only process sheets starting with "R"
             kfz_sum = df.iloc[peak_idx:peak_idx+4, 2:9].sum().sum()     #Sum kfz values in the specified range (4 rows starting at peak_idx, columns 2 to 8)
             total_sum = df.iloc[peak_idx:peak_idx+4, 1:9].sum().sum()   #Sum total values (kfz + rad) in the specified range (4 rows starting at peak_idx, columns 1 to 8)
+            SV_sum = df.iloc[peak_idx:peak_idx+4, 4:9].sum().sum()
             dic[sheet_name] = {
                 "total": total_sum,
                 "kfz": kfz_sum,
-                "rad": total_sum - kfz_sum
+                "rad": total_sum - kfz_sum,
+                "Summe_SV": SV_sum
             }
     return dic
 
@@ -325,6 +326,12 @@ def PKW_Einheiten_traffic_dic(sheets, peak_idx):
                 "Summe_SV": round(Linienbus + Reisebus + LKW + LKW_Anh + sons)
             }
     return dic
+
+def _sv_stats(total: float, sv: float) -> Dict[str, float]:
+    total = float(total)
+    sv = float(sv)
+    share = (sv / total * 100.0) if total > 0 else 0.0
+    return {"total": total, "sv": sv, "sv_share_pct": round(share, 2)}
 
 # --------------------- GEOMETRY HELPERS ---------------------
 def segment_rectangle(A, B, width):
@@ -642,7 +649,8 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             direction_dic[sheet_name] = {
                 "total": ws["J82"].value,
                 "kfz": ws["J82"].value - ws["B82"].value,
-                "rad": ws["B82"].value
+                "rad": ws["B82"].value,
+                "Summe_SV": ws["E82"].value + ws["F82"].value + ws["G82"].value  + ws["H82"].value  + ws["I82"].value
             }
     
     #PKW Einheiten
@@ -700,22 +708,6 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             afternoon_time_end = time_end
             afternoon_peak_start_idx = idx
 
-    #PKV Einheiten 
-    PKW_Einheiten_Tag_Summe = sum(value["PKW_Total"] for value in PKW_direction_general_dic.values())
-    PKW_Einheiten_Tag_SV_Einheiten = sum(value["Summe_SV"] for value in PKW_direction_general_dic.values())
-    Tag_SV_anteil = round((PKW_Einheiten_Tag_SV_Einheiten / PKW_Einheiten_Tag_Summe) * 100,2)
-    
-    PKW_Einheiten_traffic_morning = PKW_Einheiten_traffic_dic(sheets, morning_start_idx)
-    PKW_Einheiten_traffic_afternoon = PKW_Einheiten_traffic_dic(sheets, afternoon_peak_start_idx)
-
-    PKW_Einheiten_morning_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_morning.values())
-    PKW_Einheiten_afternoon_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_afternoon.values())
-
-    PKW_Einheiten_SV_morning = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_morning.values())
-    PKW_Einheiten_SV_afternoon = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_afternoon.values())
-
-    SV_anteil_morning = round((PKW_Einheiten_SV_morning / PKW_Einheiten_morning_summe) * 100,2)
-    SV_anteil_afternoon = round((PKW_Einheiten_SV_afternoon / PKW_Einheiten_afternoon_summe) * 100,2)
     
     col = 1
     start = 13   # Excel row 14
@@ -749,9 +741,39 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     afternoon_time_start = str(afternoon_time_start).split("-")[0]
     afternoon_time_end   = str(afternoon_time_end).split("-")[-1]
     
-    # Build peak dics
+    #KFZ
+    kfz_Tag_Summe = sum(value["kfz"] for value in direction_dic.values())
+    kfz_Tag_SV = sum(value["Summe_SV"] for value in direction_dic.values())
+    
     direction_morning_dic = build_direction_dic(sheets, morning_start_idx)
     direction_afternoon_dic = build_direction_dic(sheets, afternoon_peak_start_idx)
+    
+    kfz_morning_summe = sum(value["kfz"] for value in direction_morning_dic.values())
+    kfz_afternoon_summe = sum(value["kfz"] for value in direction_afternoon_dic.values())
+    kfz_SV_morning = sum(value["Summe_SV"] for value in direction_morning_dic.values())
+    kfz_SV_afternoon = sum(value["Summe_SV"] for value in direction_afternoon_dic.values())     
+    
+    #PKV Einheiten 
+    PKW_Einheiten_Tag_Summe = sum(value["PKW_Total"] for value in PKW_direction_general_dic.values())
+    PKW_Einheiten_Tag_SV = sum(value["Summe_SV"] for value in PKW_direction_general_dic.values())
+
+    
+    PKW_Einheiten_traffic_morning = PKW_Einheiten_traffic_dic(sheets, morning_start_idx)
+    PKW_Einheiten_traffic_afternoon = PKW_Einheiten_traffic_dic(sheets, afternoon_peak_start_idx)
+
+    PKW_Einheiten_morning_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_morning.values())
+    PKW_Einheiten_afternoon_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_afternoon.values())
+
+    PKW_Einheiten_SV_morning = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_morning.values())
+    PKW_Einheiten_SV_afternoon = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_afternoon.values())
+
+    kfz_sv_full = _sv_stats(kfz_Tag_Summe, kfz_Tag_SV)
+    kfz_sv_morning = _sv_stats(kfz_morning_summe, kfz_SV_morning)
+    kfz_sv_afternoon = _sv_stats(kfz_afternoon_summe, kfz_SV_afternoon)
+
+    pkw_sv_full = _sv_stats(PKW_Einheiten_Tag_Summe, PKW_Einheiten_Tag_SV)
+    pkw_sv_morning = _sv_stats(PKW_Einheiten_morning_summe, PKW_Einheiten_SV_morning)
+    pkw_sv_afternoon = _sv_stats(PKW_Einheiten_afternoon_summe, PKW_Einheiten_SV_afternoon)
 
     # --- Ensure consistent ordering (important!) ---
     present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys()) #Convert "R1" → 1, etc, and sorts
@@ -909,6 +931,19 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             "morning_peak": side_morning_sel,
             "afternoon_peak": side_afternoon_sel,
         },
+        
+        "sv": {
+        "kfz": {
+            "full_day": kfz_sv_full,
+            "morning_peak": kfz_sv_morning,
+            "afternoon_peak": kfz_sv_afternoon,
+        },
+        "pkw": {
+            "full_day": pkw_sv_full,
+            "morning_peak": pkw_sv_morning,
+            "afternoon_peak": pkw_sv_afternoon,
+        },
+    },
     }
     
     return pngs, meta

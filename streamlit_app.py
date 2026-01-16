@@ -76,7 +76,8 @@ if uploaded:
             # ------------------------------
             # KFZ | Bicycle by direction (table)
             # ------------------------------
-            st.subheader(f"Traffic by direction ({mode} | Bicycle)")
+
+            st.subheader(f"Traffic by intersection direction ({mode} | Bicycle)")
 
             df = pd.DataFrame(meta["per_direction"])
 
@@ -114,6 +115,9 @@ if uploaded:
                 st.write(f"{int(round(meta['totals'][f'afternoon_peak_{flow_col}']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
 
             # Side table (mode-dependent labels)
+
+            st.subheader(f"Traffic by cardinal direction ({mode})")
+
             bd = meta["by_side"]["full_day"]
             df_side = pd.DataFrame({
                 "Side": ["N", "E", "S", "W"],
@@ -122,6 +126,37 @@ if uploaded:
                 f"Total {mode}":     [int(round(bd["total_kfz"][s])) for s in ["N","E","S","W"]],
             })
             st.dataframe(df_side, use_container_width=True, hide_index=True)
+            
+            st.subheader(f"Totals & SV share ({mode})")
+
+            mode_key = "kfz" if mode == "KFZ" else "pkw"
+            sv_block = meta["sv"][mode_key]
+
+            def pct(x):
+                return f"{x:.2f}%"
+
+            df_sv = pd.DataFrame([
+                {
+                    "Time window": "Full day",
+                    f"Total {mode}": int(round(sv_block["full_day"]["total"])),
+                    f"SV {mode}": int(round(sv_block["full_day"]["sv"])),
+                    "SV share (%)": pct(sv_block["full_day"]["sv_share_pct"]),
+                },
+                {
+                    "Time window": "Morning peak",
+                    f"Total {mode}": int(round(sv_block["morning_peak"]["total"])),
+                    f"SV {mode}": int(round(sv_block["morning_peak"]["sv"])),
+                    "SV share (%)": pct(sv_block["morning_peak"]["sv_share_pct"]),
+                },
+                {
+                    "Time window": "Afternoon peak",
+                    f"Total {mode}": int(round(sv_block["afternoon_peak"]["total"])),
+                    f"SV {mode}": int(round(sv_block["afternoon_peak"]["sv"])),
+                    "SV share (%)": pct(sv_block["afternoon_peak"]["sv_share_pct"]),
+                },
+            ])
+
+            st.dataframe(df_sv, use_container_width=True, hide_index=True)
             
             # Display each generated image with download button
             for png_bytes, out_name in png_list:
