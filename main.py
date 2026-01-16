@@ -423,6 +423,105 @@ def place_group_variable(P, fixed_axis, fixed_val, ids, mid_val, dir_to_axis, W)
         pt[1 - fixed_axis] = mid_val + dir_to_axis * off     #Position on variable axis, works such that the center of the group lays at mid_val from center line
         P[pid] = C + pt
 
+def align_rect_pairs_shift_groups(P: Dict[int, np.ndarray], pairs: List[Tuple[int, int]]) -> None:
+    """
+    Post-process already-computed port positions P so that the rectangle pairs
+    (2,17), (5,14), (8,23), (11,20) are aligned.
+
+    Alignment rule (per pair):
+      - Use the midpoint of the pair's *variable* coordinate
+      - Apply the required delta to the ENTIRE group (side, dep/arr) of each endpoint,
+        so neighboring ports move together and flows still start/end flush.
+
+    Variable axis:
+      - N/S groups vary in x  -> axis 0
+      - E/W groups vary in y  -> axis 1
+
+    Requires GROUP_SLOTS to be defined (as in your module).
+    """
+    # --- local helpers (kept inside this single function) ---
+    def _pid_to_group_key(pid):
+        for side in ("N", "E", "S", "W"):
+            if pid in GROUP_SLOTS[(side, "dep")]:
+                return (side, "dep")
+            if pid in GROUP_SLOTS[(side, "arr")]:
+                return (side, "arr")
+        return None
+
+    def _var_axis_from_side(side):
+        return 0 if side in ("N", "S") else 1
+
+    # --- apply constraints ---
+    for a, b in pairs:
+        if a not in P or b not in P:
+            continue
+
+        ga = _pid_to_group_key(a)
+        gb = _pid_to_group_key(b)
+        if ga is None or gb is None:
+            continue
+
+        side_a, _ = ga
+        side_b, _ = gb
+        ax_a = _var_axis_from_side(side_a)
+        ax_b = _var_axis_from_side(side_b)
+        if ax_a != ax_b:
+            # safety: don't try to align across different variable axes
+            continue
+        var_axis = ax_a
+
+        Pa = np.array(P[a], float)
+        Pb = np.array(P[b], float)
+        mid = 0.5 * (Pa[var_axis] + Pb[var_axis])
+
+        # shift full group containing a
+        delta_a = mid - Pa[var_axis]
+        for pid in GROUP_SLOTS[ga]:
+            if pid in P:
+                Ppid = np.array(P[pid], float)
+                Ppid[var_axis] += delta_a
+                P[pid] = Ppid
+
+        # shift full group containing b
+        delta_b = mid - Pb[var_axis]
+        for pid in GROUP_SLOTS[gb]:
+            if pid in P:
+                Ppid = np.array(P[pid], float)
+                Ppid[var_axis] += delta_b
+                P[pid] = Ppid
+
+    """
+    Force each (a,b) pair to share the same 'variable' coordinate by setting
+    both to the midpoint of their current variable coordinate.
+
+    Variable axis:
+      - If the points are on N/S (y is +/-R), variable axis is x (axis 0)
+      - If the points are on E/W (x is +/-R), variable axis is y (axis 1)
+
+    This runs AFTER P has been computed.
+    """
+    for a, b in pairs:
+        if a not in P or b not in P:
+            continue
+
+        Pa = np.array(P[a], float)
+        Pb = np.array(P[b], float)
+
+        # Decide if this pair is N/S-like or E/W-like based on which coordinate is "fixed"
+        # N/S points have y near +/-R (so y has large abs), E/W points have x near +/-R.
+        if abs(Pa[1]) >= abs(Pa[0]) and abs(Pb[1]) >= abs(Pb[0]):
+            var_axis = 0  # align x
+        else:
+            var_axis = 1  # align y
+
+        mid = 0.5 * (Pa[var_axis] + Pb[var_axis])
+
+        Pa[var_axis] = mid
+        Pb[var_axis] = mid
+
+        P[a] = Pa
+        P[b] = Pb
+
 def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10,
                     label: Optional[str] = None, label_color: str = "white",
                     label_fontsize: int = 9):
@@ -544,6 +643,13 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","dep")], -d_WE, +1, W)
     place_group_variable(P, 0, -R, GROUP_ACTIVE[("W","arr")], +d_WE, -1, W)
 
+    # --- ALIGN RECT PAIRS (post-placement) ---
+    align_rect_pairs_shift_groups(
+        P,
+        pairs=[(2, 17), (5, 14), (8, 23), (11, 20)]
+    )
+    
+    
     # Plot
     fig, ax = plt.subplots(figsize=(10, 10))  #fig is the whole image canvas, ax is the coordinate system where shapes are drawn
 
