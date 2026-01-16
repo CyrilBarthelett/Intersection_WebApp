@@ -18,6 +18,14 @@ st.write("Upload an Excel traffic count file (`.xlsx`) ""and download the genera
 # --------------------------------------------------
 # Color settings in sidebar
 # --------------------------------------------------
+
+st.sidebar.header("Units")
+mode = st.sidebar.radio(
+    "Show flows as",
+    options=["KFZ", "PKW"],
+    help="KFZ = normal motor vehicles. PKW = passenger car equivalents (PKW-Einheiten)."
+)
+
 st.sidebar.header("Flow Colors")
 n_color = st.sidebar.color_picker("North", "#1f77b4")
 e_color = st.sidebar.color_picker("East", "#ff7f0e")
@@ -60,7 +68,7 @@ if uploaded:
             excel_bytes = uploaded.read()
 
             # Generate PNG images and filenames
-            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value)
+            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value, mode = mode)
 
             # Success message
             st.success("Done!")
@@ -68,71 +76,52 @@ if uploaded:
             # ------------------------------
             # KFZ | Bicycle by direction (table)
             # ------------------------------
-            st.subheader("Traffic by direction (KFZ | Bicycle)")
+            st.subheader(f"Traffic by direction ({mode} | Bicycle)")
 
             df = pd.DataFrame(meta["per_direction"])
 
-            # Make integer columns (nice display)
-            num_cols = [
-                "full_day_kfz", "full_day_bike",
-                "morning_peak_kfz", "morning_peak_bike",
-                "afternoon_peak_kfz", "afternoon_peak_bike",
+            flow_col = "kfz" if mode == "KFZ" else "pkw"
+
+            # round and int for the columns we will actually use
+            cols_to_int = [
+                f"full_day_{flow_col}", f"morning_peak_{flow_col}", f"afternoon_peak_{flow_col}",
+                "full_day_bike", "morning_peak_bike", "afternoon_peak_bike"
             ]
-            for c in num_cols:
+            for c in cols_to_int:
                 df[c] = df[c].round(0).astype(int)
 
-            # Build the "KFZ | Bicycle" strings
             df_out = pd.DataFrame({
                 "Direction": df["direction"],
-                "Full day (KFZ | Bicycle)": df["full_day_kfz"].astype(str) + " | " + df["full_day_bike"].astype(str),
-                "Morning peak (KFZ | Bicycle)": df["morning_peak_kfz"].astype(str) + " | " + df["morning_peak_bike"].astype(str),
-                "Afternoon peak (KFZ | Bicycle)": df["afternoon_peak_kfz"].astype(str) + " | " + df["afternoon_peak_bike"].astype(str),
+                f"Full day ({mode} | Bicycle)": df[f"full_day_{flow_col}"].astype(str) + " | " + df["full_day_bike"].astype(str),
+                f"Morning peak ({mode} | Bicycle)": df[f"morning_peak_{flow_col}"].astype(str) + " | " + df["morning_peak_bike"].astype(str),
+                f"Afternoon peak ({mode} | Bicycle)": df[f"afternoon_peak_{flow_col}"].astype(str) + " | " + df["afternoon_peak_bike"].astype(str),
             })
-
             st.dataframe(df_out, use_container_width=True, hide_index=True)
 
+            # Totals (mode-dependent)
             t1, t2, t3 = st.columns(3)
 
             with t1:
-                st.markdown("**Total full day (KFZ | Bicycle)**")
-                st.write(f"{int(round(meta['totals']['full_day_kfz']))} | {int(round(meta['totals']['full_day_bike']))}")
+                st.markdown(f"**Total full day ({mode} | Bicycle)**")
+                st.write(f"{int(round(meta['totals'][f'full_day_{flow_col}']))} | {int(round(meta['totals']['full_day_bike']))}")
 
             with t2:
-                st.markdown("**Total morning peak (KFZ | Bicycle)**")
-                st.write(f"{int(round(meta['totals']['morning_peak_kfz']))} | {int(round(meta['totals']['morning_peak_bike']))}")
+                st.markdown(f"**Total morning peak ({mode} | Bicycle)**")
+                st.write(f"{int(round(meta['totals'][f'morning_peak_{flow_col}']))} | {int(round(meta['totals']['morning_peak_bike']))}")
 
             with t3:
-                st.markdown("**Total afternoon peak (KFZ | Bicycle)**")
-                st.write(f"{int(round(meta['totals']['afternoon_peak_kfz']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
-                
+                st.markdown(f"**Total afternoon peak ({mode} | Bicycle)**")
+                st.write(f"{int(round(meta['totals'][f'afternoon_peak_{flow_col}']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
+
+            # Side table (mode-dependent labels)
             bd = meta["by_side"]["full_day"]
             df_side = pd.DataFrame({
                 "Side": ["N", "E", "S", "W"],
-                "Departing KFZ": [int(round(bd["dep_kfz"][s])) for s in ["N","E","S","W"]],
-                "Arriving KFZ":  [int(round(bd["arr_kfz"][s])) for s in ["N","E","S","W"]],
-                "Total KFZ":  [int(round(bd["total_kfz"][s])) for s in ["N","E","S","W"]],
+                f"Departing {mode}": [int(round(bd["dep_kfz"][s])) for s in ["N","E","S","W"]],
+                f"Arriving {mode}":  [int(round(bd["arr_kfz"][s])) for s in ["N","E","S","W"]],
+                f"Total {mode}":     [int(round(bd["total_kfz"][s])) for s in ["N","E","S","W"]],
             })
             st.dataframe(df_side, use_container_width=True, hide_index=True)
-
-            # Show time ranges
-            st.subheader("Detected time ranges")
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.markdown("**Full day**")
-                st.write(f"Start: {meta['day']['start']}")
-                st.write(f"End:   {meta['day']['end']}")
-
-            with c2:
-                st.markdown("**Morning peak**")
-                st.write(f"Start: {meta['morning_peak']['start']}")
-                st.write(f"End:   {meta['morning_peak']['end']}")
-
-            with c3:
-                st.markdown("**Afternoon peak**")
-                st.write(f"Start: {meta['afternoon_peak']['start']}")
-                st.write(f"End:   {meta['afternoon_peak']['end']}")
             
             # Display each generated image with download button
             for png_bytes, out_name in png_list:

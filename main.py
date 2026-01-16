@@ -22,6 +22,12 @@ from openpyxl import load_workbook
 width_min = 0.1
 width_max = 0.7
 
+#PKW_Einheiten faktors
+faktor_rad = 0.5
+faktor_Linienbus = 1.5
+faktor_lkwAnh = 2
+faktor_sonst = 1.5
+
 # 12 directions possible (R1..R12) -> endpoints (i,j)
 DIR_TO_FLOW = {
     1:  (1, 24),
@@ -46,6 +52,7 @@ C = np.array([0.0, 0.0])    # center
 R = 4.0                     # radius for placing points  
 d = 1                       # distance from center line to middle point of group
 inward = 0.9                # inward control for bezier curves (curvature strength)
+# PKW_Einheiten = False       # Whether to compute PKW_Einheiten flows instead of KFZ
 
 FILL = "lightblue"
 EDGE = "none"
@@ -109,24 +116,7 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
         clip_on=False
     )
 
-def add_side_span_line_and_total(
-    ax,
-    P,
-    W,                 # <-- add W so we can use half-widths
-    dep_ids,
-    arr_ids,
-    side,
-    total_text,
-    d_NS,
-    d_WE,
-    line_lw=3,
-    line_color="black",
-    text_color="black",
-    text_fontsize=18,
-    offset_line=0.9,
-    offset_text=1.2,
-    zorder=40,
-):
+def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_WE,line_lw=3,line_color="black",text_color="black",text_fontsize=18,offset_line=0.9,offset_text=1.2,zorder=40):
     """
     Draw a span line between the two most outward edges of a side considering BOTH dep+arr ports.
     Outward edges are computed as coordinate +/- (W[pid]/2) along the variable axis.
@@ -236,8 +226,7 @@ def add_side_span_line_and_total(
         clip_on=False,
     )
 
-
-def compute_side_sums(flows_present, kfz_array, bike_array=None):
+def compute_side_sums(flows_present, kfz_array):
     """
     Compute sums per side for departing and arriving traffic.
 
@@ -258,9 +247,6 @@ def compute_side_sums(flows_present, kfz_array, bike_array=None):
     dep_kfz = {s: 0.0 for s in ("N", "E", "S", "W")}
     arr_kfz = {s: 0.0 for s in ("N", "E", "S", "W")}
 
-    dep_bike = {s: 0.0 for s in ("N", "E", "S", "W")} if bike_array is not None else None
-    arr_bike = {s: 0.0 for s in ("N", "E", "S", "W")} if bike_array is not None else None
-
     # --- KFZ sums ---
     for (i, j), kfz in zip(flows_present, kfz_array):
         if i in dep_pid_to_side and j in arr_pid_to_side:
@@ -276,40 +262,14 @@ def compute_side_sums(flows_present, kfz_array, bike_array=None):
         arr_kfz[arr_side] += float(kfz)
 
     total_kfz = {s: dep_kfz[s] + arr_kfz[s] for s in ("N", "E", "S", "W")}
-
-    # --- Bike sums (optional) ---
-    if bike_array is not None:
-        for (i, j), bike in zip(flows_present, bike_array):
-            if i in dep_pid_to_side and j in arr_pid_to_side:
-                dep_side = dep_pid_to_side[i]
-                arr_side = arr_pid_to_side[j]
-            elif j in dep_pid_to_side and i in arr_pid_to_side:
-                dep_side = dep_pid_to_side[j]
-                arr_side = arr_pid_to_side[i]
-            else:
-                continue
-
-            dep_bike[dep_side] += float(bike)
-            arr_bike[arr_side] += float(bike)
-
-        total_bike = {s: dep_bike[s] + arr_bike[s] for s in ("N", "E", "S", "W")}
-
-        return {
-            "dep_kfz": dep_kfz,
-            "arr_kfz": arr_kfz,
-            "total_kfz": total_kfz,
-            "dep_bike": dep_bike,
-            "arr_bike": arr_bike,
-            "total_bike": total_bike,
-        }
-
+    
     return {
         "dep_kfz": dep_kfz,
         "arr_kfz": arr_kfz,
         "total_kfz": total_kfz,
     }
 
-def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
+def calculate_width(direction_dic, tmin, tmax, gamma=1.0, PKW_Einheiten=False):
     """
     Calculate width array based on KFZ values using a GLOBAL mapping:
       - tmin -> width_min
@@ -320,7 +280,10 @@ def calculate_width(direction_dic, tmin, tmax, gamma=1.0):
     gamma < 1.0  -> more resolution for small flows (recommended: 0.5)
     gamma > 1.0  -> more resolution for large flows
     """
-    traffic = np.array([sub_dic["kfz"] for sub_dic in direction_dic.values()], dtype=float)  #Extracts all kfz values from the dictionary (in iteration order)
+    if not PKW_Einheiten:
+        traffic = np.array([sub_dic["kfz"] for sub_dic in direction_dic.values()], dtype=float)  #Extracts all kfz values from the dictionary (in iteration order)
+    else:
+        traffic = np.array([sub_dic["PKW_Total"] for sub_dic in direction_dic.values()], dtype=float)  #Extracts all PKW_Einheiten values from the dictionary (in iteration order)
 
     if traffic.size == 1 or np.isclose(tmax, tmin):     #If only one flow or all flows equal (no scale), give them all mid-width
         return np.round(np.full_like(traffic, (width_min + width_max) / 2.0), 2)
@@ -342,6 +305,24 @@ def build_direction_dic(sheets, peak_idx):
                 "total": total_sum,
                 "kfz": kfz_sum,
                 "rad": total_sum - kfz_sum
+            }
+    return dic
+
+def PKW_Einheiten_traffic_dic(sheets, peak_idx):
+    dic = {}
+    for sheet_name, df in sheets.items():
+        if sheet_name.startswith("R"):
+            rad = df.iloc[peak_idx:peak_idx+4, 1].sum() * faktor_rad
+            einsp = df.iloc[peak_idx:peak_idx+4, 2].sum()
+            PKW = df.iloc[peak_idx:peak_idx+4, 3].sum()
+            Linienbus = df.iloc[peak_idx:peak_idx+4, 4].sum() * faktor_Linienbus
+            Reisebus = df.iloc[peak_idx:peak_idx+4, 5].sum() * faktor_Linienbus
+            LKW = df.iloc[peak_idx:peak_idx+4, 6].sum() * faktor_Linienbus
+            LKW_Anh = df.iloc[peak_idx:peak_idx+4, 7].sum() * faktor_lkwAnh
+            sons = df.iloc[peak_idx:peak_idx+4, 8].sum() * faktor_sonst
+            dic[sheet_name] = {
+                "PKW_Total": round(rad + einsp + PKW + Linienbus + Reisebus + LKW + LKW_Anh + sons),
+                "Summe_SV": round(Linienbus + Reisebus + LKW + LKW_Anh + sons)
             }
     return dic
 
@@ -647,7 +628,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ") -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -663,10 +644,29 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
                 "kfz": ws["J82"].value - ws["B82"].value,
                 "rad": ws["B82"].value
             }
+    
+    #PKW Einheiten
+    PKW_direction_general_dic = {} 
+    for sheet_name in wb.sheetnames:
+        if sheet_name.startswith("R"):
+            ws = wb[sheet_name]
+            rad = ws["B82"].value * faktor_rad
+            einsp = ws["C82"].value
+            PKW = ws["D82"].value
+            Linienbus = ws["E82"].value * faktor_Linienbus
+            Reisebus = ws["F82"].value * faktor_Linienbus
+            LKW = ws["G82"].value * faktor_Linienbus
+            LKW_Anh = ws["H82"].value * faktor_lkwAnh
+            sons = ws["I82"].value * faktor_sonst
+            PKW_direction_general_dic[sheet_name] = {
+                "PKW_Total": round(rad + einsp + PKW + Linienbus + Reisebus + LKW + LKW_Anh + sons),
+                "Summe_SV": round(Linienbus + Reisebus + LKW + LKW_Anh + sons)
+            }
 
+    
     # Load sheets for peak calculation
     sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
-
+    
     first_R_df = None
     
     # Find peaks
@@ -700,7 +700,23 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             afternoon_time_end = time_end
             afternoon_peak_start_idx = idx
 
+    #PKV Einheiten 
+    PKW_Einheiten_Tag_Summe = sum(value["PKW_Total"] for value in PKW_direction_general_dic.values())
+    PKW_Einheiten_Tag_SV_Einheiten = sum(value["Summe_SV"] for value in PKW_direction_general_dic.values())
+    Tag_SV_anteil = round((PKW_Einheiten_Tag_SV_Einheiten / PKW_Einheiten_Tag_Summe) * 100,2)
+    
+    PKW_Einheiten_traffic_morning = PKW_Einheiten_traffic_dic(sheets, morning_start_idx)
+    PKW_Einheiten_traffic_afternoon = PKW_Einheiten_traffic_dic(sheets, afternoon_peak_start_idx)
 
+    PKW_Einheiten_morning_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_morning.values())
+    PKW_Einheiten_afternoon_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_afternoon.values())
+
+    PKW_Einheiten_SV_morning = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_morning.values())
+    PKW_Einheiten_SV_afternoon = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_afternoon.values())
+
+    SV_anteil_morning = round((PKW_Einheiten_SV_morning / PKW_Einheiten_morning_summe) * 100,2)
+    SV_anteil_afternoon = round((PKW_Einheiten_SV_afternoon / PKW_Einheiten_afternoon_summe) * 100,2)
+    
     col = 1
     start = 13   # Excel row 14
     end = 80     # Excel row 81 (inclusive)
@@ -732,13 +748,6 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
 
     afternoon_time_start = str(afternoon_time_start).split("-")[0]
     afternoon_time_end   = str(afternoon_time_end).split("-")[-1]
-    # day_start = str(day_start_time).split('-')[0]
-    # day_end_time = str(day_end_time).split('-')[1]
-
-    # morning_peak_start = str(morning_time_start).split('-')[0]
-    # morning_peak_end = str(morning_time_end).split('-')[1]
-    # afternoon_peak_start = str(afternoon_time_start).split('-')[0]
-    # afternoon_peak_end = str(afternoon_time_end).split('-')[1]
     
     # Build peak dics
     direction_morning_dic = build_direction_dic(sheets, morning_start_idx)
@@ -768,9 +777,12 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     # --- Calculate widths on shared scale ---
     gamma = 0.5  # <--- more resolution; set to 1.0 for strict linear
 
-    width_general = calculate_width(direction_dic, tmin, tmax, gamma=gamma)
-    width_morning_peak = calculate_width(direction_morning_dic, tmin, tmax, gamma=gamma)
-    width_afternoon_peak = calculate_width(direction_afternoon_dic, tmin, tmax, gamma=gamma)
+    width_general = calculate_width(direction_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_morning_peak = calculate_width(direction_morning_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_afternoon_peak = calculate_width(direction_afternoon_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_PKW_general = calculate_width(PKW_direction_general_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    width_PKW_morning = calculate_width(PKW_Einheiten_traffic_morning, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    width_PKW_afternoon = calculate_width(PKW_Einheiten_traffic_afternoon, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
 
     present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
     if not present_dirnums:
@@ -784,56 +796,119 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     bike_morning = np.array([direction_morning_dic[name]["rad"] for name in present_dirs], dtype=float)
     bike_afternoon = np.array([direction_afternoon_dic[name]["rad"] for name in present_dirs], dtype=float)
 
+    PKW_general = np.array([PKW_direction_general_dic[name]["PKW_Total"] for name in present_dirs], dtype=float)
+    PKW_morning = np.array([PKW_Einheiten_traffic_morning[name]["PKW_Total"] for name in present_dirs], dtype=float)
+    PKW_afternoon = np.array([PKW_Einheiten_traffic_afternoon[name]["PKW_Total"] for name in present_dirs], dtype=float)
+    
+    
     #Number of KFZ per side: {"dep_kfz": dep_kfz, "arr_kfz": arr_kfz, "total_kfz": total_kfz}
-    side_general = compute_side_sums(flows_present, kfz_general, bike_general) 
-    side_morning = compute_side_sums(flows_present, kfz_morning, bike_morning)
-    side_afternoon = compute_side_sums(flows_present, kfz_afternoon, bike_afternoon)
+    side_general = compute_side_sums(flows_present, kfz_general) 
+    side_morning = compute_side_sums(flows_present, kfz_morning)
+    side_afternoon = compute_side_sums(flows_present, kfz_afternoon)
+    
+    PKW_side_general = compute_side_sums(flows_present, PKW_general)
+    PKW_side_morning = compute_side_sums(flows_present, PKW_morning)
+    PKW_side_afternoon = compute_side_sums(flows_present, PKW_afternoon)
 
-        # ---- Per-direction KFZ + Bicycle values for display in Streamlit ----
+    # ---- Per-direction KFZ + Bicycle values for display in Streamlit ----
     per_direction = []
     for name in present_dirs:
         per_direction.append({
-            "direction": name,  # e.g. "R1"
+            "direction": name,
+
             "full_day_kfz": float(direction_dic[name]["kfz"]),
-            "full_day_bike": float(direction_dic[name]["rad"]),
             "morning_peak_kfz": float(direction_morning_dic[name]["kfz"]),
-            "morning_peak_bike": float(direction_morning_dic[name]["rad"]),
             "afternoon_peak_kfz": float(direction_afternoon_dic[name]["kfz"]),
+
+            "full_day_pkw": float(PKW_direction_general_dic[name]["PKW_Total"]),
+            "morning_peak_pkw": float(PKW_Einheiten_traffic_morning[name]["PKW_Total"]),
+            "afternoon_peak_pkw": float(PKW_Einheiten_traffic_afternoon[name]["PKW_Total"]),
+
+            "full_day_bike": float(direction_dic[name]["rad"]),
+            "morning_peak_bike": float(direction_morning_dic[name]["rad"]),
             "afternoon_peak_bike": float(direction_afternoon_dic[name]["rad"]),
         })
     
+    mode = mode.upper().strip()
+    use_pkw = (mode == "PKW")
+
+    if use_pkw:
+        flow_general   = PKW_general
+        flow_morning   = PKW_morning
+        flow_afternoon = PKW_afternoon
+
+        width_general_sel   = width_PKW_general
+        width_morning_sel   = width_PKW_morning
+        width_afternoon_sel = width_PKW_afternoon
+
+        unit_label = "PKW_Einheiten"
+        suffix_general = "full_day_PKW_Einheiten"
+        suffix_morning = "morning_peak_PKW_Einheiten"
+        suffix_afternoon = "afternoon_peak_PKW_Einheiten"
+
+        side_general_sel   = PKW_side_general
+        side_morning_sel   = PKW_side_morning
+        side_afternoon_sel = PKW_side_afternoon
+    else:
+        flow_general   = kfz_general
+        flow_morning   = kfz_morning
+        flow_afternoon = kfz_afternoon
+
+        width_general_sel   = width_general
+        width_morning_sel   = width_morning_peak
+        width_afternoon_sel = width_afternoon_peak
+
+        unit_label = "KFZ"
+        suffix_general = "full_day"
+        suffix_morning = "morning_peak"
+        suffix_afternoon = "afternoon_peak"
+
+        side_general_sel   = side_general
+        side_morning_sel   = side_morning
+        side_afternoon_sel = side_afternoon
+    
     # Generate three plots
     pngs = []
-    pngs.append(create_plot(kfz_general, bike_general, width_general, flows_present, verkehrszählungsort, "full_day", day_start_time, day_end_time, side_colors, d_NS, d_WE))
-    pngs.append(create_plot(kfz_morning, bike_morning, width_morning_peak, flows_present, verkehrszählungsort, "morning_peak", morning_time_start, morning_time_end, side_colors, d_NS, d_WE))
-    pngs.append(create_plot(kfz_afternoon, bike_afternoon, width_afternoon_peak, flows_present, verkehrszählungsort, "afternoon_peak", afternoon_time_start, afternoon_time_end, side_colors, d_NS, d_WE))
+    pngs.append(create_plot(flow_general,   bike_general,   width_general_sel,   flows_present, verkehrszählungsort, suffix_general,   day_start_time,       day_end_time,       side_colors, d_NS, d_WE))
+    pngs.append(create_plot(flow_morning,   bike_morning,   width_morning_sel,   flows_present, verkehrszählungsort, suffix_morning,   morning_time_start,   morning_time_end,   side_colors, d_NS, d_WE))
+    pngs.append(create_plot(flow_afternoon, bike_afternoon, width_afternoon_sel, flows_present, verkehrszählungsort, suffix_afternoon, afternoon_time_start, afternoon_time_end, side_colors, d_NS, d_WE))
 
 
     meta = {
         "location": verkehrszählungsort,
+        "mode": unit_label, 
+
         "day": {"start": day_start_time, "end": day_end_time},
         "morning_peak": {"start": morning_time_start, "end": morning_time_end},
         "afternoon_peak": {"start": afternoon_time_start, "end": afternoon_time_end},
+
         "tmin": tmin,
         "tmax": tmax,
         "gamma": gamma,
 
+        # Keep your per_direction as-is OR extend it (see below)
         "per_direction": per_direction,
+
+        # totals now depend on selected mode
         "totals": {
             "full_day_kfz": float(np.sum(kfz_general)),
             "morning_peak_kfz": float(np.sum(kfz_morning)),
             "afternoon_peak_kfz": float(np.sum(kfz_afternoon)),
 
-            "full_day_bike": float(sum(direction_dic[n]["rad"] for n in present_dirs)),
-            "morning_peak_bike": float(sum(direction_morning_dic[n]["rad"] for n in present_dirs)),
-            "afternoon_peak_bike": float(sum(direction_afternoon_dic[n]["rad"] for n in present_dirs)),
+            "full_day_pkw": float(np.sum(PKW_general)),
+            "morning_peak_pkw": float(np.sum(PKW_morning)),
+            "afternoon_peak_pkw": float(np.sum(PKW_afternoon)),
+
+            "full_day_bike": float(np.sum(bike_general)),
+            "morning_peak_bike": float(np.sum(bike_morning)),
+            "afternoon_peak_bike": float(np.sum(bike_afternoon)),
         },
-        
+
         "by_side": {
-        "full_day": side_general,
-        "morning_peak": side_morning,
-        "afternoon_peak": side_afternoon,
-        }
+            "full_day": side_general_sel,
+            "morning_peak": side_morning_sel,
+            "afternoon_peak": side_afternoon_sel,
+        },
     }
     
     return pngs, meta
