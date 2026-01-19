@@ -597,6 +597,10 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
                 clip_on=False
             )
         else:
+            if len(str(label)) > 3:
+                label_fontsize -= 1 
+            if len(str(label)) > 4:
+                label_fontsize -= 1
             centroid = tri.mean(axis=0)
             ax.text(
                 centroid[0], centroid[1], str(label),
