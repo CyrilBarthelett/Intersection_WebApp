@@ -20,8 +20,8 @@ from datetime import datetime, timedelta
 
 # --------------------- CONFIG ---------------------
 # Minimum/maximum thickness for flow bands 
-width_min = 0.1
-width_max = 0.7
+width_min = 0.02
+width_max = 0.9
 
 #PKW_Einheiten faktors
 faktor_rad = 0.5
