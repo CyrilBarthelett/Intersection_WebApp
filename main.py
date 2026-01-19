@@ -525,11 +525,13 @@ def align_rect_pairs_shift_groups(P: Dict[int, np.ndarray], pairs: List[Tuple[in
 
 def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10,
                     label: Optional[str] = None, label_color: str = "white",
-                    label_fontsize: int = 9):
-    """Add an arrow for a group of slots, optionally with a text label inside."""
+                    label_fontsize: int = 8):
+    """Add an arrow for a group of slots (supports 1+ ports), optionally with a text label inside."""
     ids = list(group_ids)
-    pts = np.array([P[i] for i in ids], float)
+    if not ids:
+        return
 
+    # side geometry
     if side in ("N", "S"):
         var_axis = 0  # x
         nrm = np.array([0.0, +1.0]) if side == "N" else np.array([0.0, -1.0])
@@ -537,42 +539,74 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
         var_axis = 1  # y
         nrm = np.array([+1.0, 0.0]) if side == "E" else np.array([-1.0, 0.0])
 
-    var = pts[:, var_axis]
-    far_idx = int(np.argmax(np.abs(var)))
-    clo_idx = int(np.argmin(np.abs(var)))
+    # ---------- build triangle ----------
+    if len(ids) == 1:
+        pid = ids[0]
+        P0 = np.array(P[pid], float)
 
-    pid_far = ids[far_idx]
-    pid_clo = ids[clo_idx]
+        s = np.sign(P0[var_axis]) or 1.0
+        half = float(W[pid]) / 2.0
 
-    P_far = np.array(P[pid_far], float)
-    P_clo = np.array(P[pid_clo], float)
+        base_a = P0.copy(); base_a[var_axis] += half * s
+        base_b = P0.copy(); base_b[var_axis] -= half * s
 
-    s_far = np.sign(P_far[var_axis]) or 1.0
-    d_far = (W[pid_far] / 2.0) * s_far
-    d_clo = -(W[pid_clo] / 2.0) * s_far
+        base_center = 0.5 * (base_a + base_b)
+        tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
 
-    base_far = P_far.copy(); base_far[var_axis] += d_far
-    base_clo = P_clo.copy(); base_clo[var_axis] += d_clo
+        tri = np.vstack([tip, base_a, base_b])
 
-    base_center = 0.5 * (base_far + base_clo)
-    tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
+    else:
+        pts = np.array([P[i] for i in ids], float)
+        var = pts[:, var_axis]
 
-    tri = np.vstack([tip, base_far, base_clo])
+        far_idx = int(np.argmax(np.abs(var)))
+        clo_idx = int(np.argmin(np.abs(var)))
 
+        pid_far = ids[far_idx]
+        pid_clo = ids[clo_idx]
+
+        P_far = np.array(P[pid_far], float)
+        P_clo = np.array(P[pid_clo], float)
+
+        s_far = np.sign(P_far[var_axis]) or 1.0
+        d_far = (float(W[pid_far]) / 2.0) * s_far
+        d_clo = -(float(W[pid_clo]) / 2.0) * s_far
+
+        base_far = P_far.copy(); base_far[var_axis] += d_far
+        base_clo = P_clo.copy(); base_clo[var_axis] += d_clo
+
+        base_center = 0.5 * (base_far + base_clo)
+        tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
+
+        tri = np.vstack([tip, base_far, base_clo])
+
+    # ---------- draw ----------
     ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
 
-    # ---- Label inside arrow ----
+    # ---------- label ----------
     if label is not None:
-        centroid = tri.mean(axis=0)
-        ax.text(
-            centroid[0], centroid[1], label,
-            ha="center", va="center",
-            fontsize=label_fontsize,
-            color=label_color,
-            zorder=zorder + 1,
-            fontweight="bold",
-            clip_on=False
-        )
+        if len(ids) == 1:
+            centroid = tri.mean(axis=0)
+            ax.text(
+                centroid[0], centroid[1], str(label),
+                ha="center", va="center",
+                fontsize=label_fontsize-2,
+                color=label_color,
+                zorder=zorder + 1,
+                fontweight="bold",
+                clip_on=False
+            )
+        else:
+            centroid = tri.mean(axis=0)
+            ax.text(
+                centroid[0], centroid[1], str(label),
+                ha="center", va="center",
+                fontsize=label_fontsize,
+                color=label_color,
+                zorder=zorder + 1,
+                fontweight="bold",
+                clip_on=False
+            )
 
 def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE):
     """Create a PNG plot for given traffic and width data.
