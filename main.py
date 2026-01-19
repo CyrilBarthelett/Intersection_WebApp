@@ -727,7 +727,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     total_kfz_by_side = side_sums["total_kfz"]
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
-        if len(ids_dep) >= 2:
+        if len(ids_dep) >= 1:
             dep_label = str(int(round(dep_kfz_by_side.get(side, 0.0))))
             add_group_arrow(
                 ax, P, W, ids_dep, side,
@@ -736,7 +736,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
             )
 
         ids_arr = GROUP_ACTIVE[(side, "arr")]
-        if len(ids_arr) >= 2:
+        if len(ids_arr) >= 1:
             arr_label = str(int(round(arr_kfz_by_side.get(side, 0.0))))
             add_group_arrow(
                 ax, P, W, ids_arr, side,
