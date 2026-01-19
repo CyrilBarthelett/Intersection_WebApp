@@ -15,6 +15,7 @@ matplotlib.use("Agg") # Agg is a non-interactive, off-screen rendering backend, 
 import matplotlib.pyplot as plt    
 from matplotlib.patches import Polygon
 from openpyxl import load_workbook
+from datetime import datetime, timedelta
 
 
 # --------------------- CONFIG ---------------------
@@ -741,7 +742,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ") -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -768,6 +769,42 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
         raise ValueError("SUMME row not found")
     
     summe_row_number = summe_idx+1
+
+    def _parse_interval(cell_value: Any) -> tuple[Optional[str], Optional[str]]:
+        """
+        Parse a time cell like '07:00-07:15' (also handles spaces and en-dash).
+        Returns ('07:00','07:15') or (None,None) if not parseable.
+        """
+        if cell_value is None:
+            return None, None
+        s = str(cell_value).strip()
+        s = s.replace("–", "-").replace("—", "-")
+        s = s.replace(" ", "")
+        if "-" not in s:
+            return None, None
+        a, b = s.split("-", 1)
+        if len(a) == 5 and len(b) == 5:
+            return a, b
+        return None, None
+
+
+    def _find_row_for_start(hhmm: str) -> int:
+        """
+        Find the row where the time window starts at hhmm.
+        Excel format is like '7:45-8:00'.
+        """
+        for i in range(13, summe_idx):
+            cell = str(first_R_df.iloc[i, 0])
+            start = cell.split("-")[0].strip()
+
+            # pad hour so '7:45' -> '07:45'
+            h, m = start.split(":")
+            start_norm = f"{int(h):02d}:{m}"
+
+            if start_norm == hhmm:
+                return i
+
+        raise ValueError(f"Custom start time {hhmm} not found in Excel.")
 
     # Read directions
     direction_dic = {}
@@ -867,6 +904,32 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     direction_morning_dic = build_direction_dic(sheets, morning_start_idx)
     direction_afternoon_dic = build_direction_dic(sheets, afternoon_peak_start_idx)
     
+    direction_custom_dic = None
+    PKW_Einheiten_traffic_custom = None
+    custom_time_start = None
+    custom_time_end = None
+    custom_start_idx = None
+
+    if use_custom_window:
+        if not custom_start_time:
+            raise ValueError("use_custom_window=True but custom_start_time is None")
+
+        # end = start + 1 hour
+        start_dt = datetime.strptime(custom_start_time, "%H:%M")
+        custom_time_start = custom_start_time
+        custom_time_end = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+
+        # locate the row where the interval starts at custom_time_start
+        custom_start_idx = _find_row_for_start(custom_time_start)
+
+        # we assume 15-min steps => 1 hour = 4 rows
+        # make sure we don't go beyond SUMME
+        if custom_start_idx + 3 >= summe_idx:
+            raise ValueError("Custom 1h window exceeds available data in Excel.")
+
+        direction_custom_dic = build_direction_dic(sheets, custom_start_idx)
+        PKW_Einheiten_traffic_custom = PKW_Einheiten_traffic_dic(sheets, custom_start_idx)
+    
     kfz_morning_summe = sum(value["kfz"] for value in direction_morning_dic.values())
     kfz_afternoon_summe = sum(value["kfz"] for value in direction_afternoon_dic.values())
     kfz_SV_morning = sum(value["Summe_SV"] for value in direction_morning_dic.values())
@@ -909,8 +972,11 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
 
     # --- Global min/max across ALL three datasets ---
     all_kfz = []
-    for dir in (direction_dic, direction_morning_dic, direction_afternoon_dic):
-        all_kfz.extend(v["kfz"] for v in dir.values())
+    for dir_ in (direction_dic, direction_morning_dic, direction_afternoon_dic):
+        all_kfz.extend(v["kfz"] for v in dir_.values())
+
+    if direction_custom_dic is not None:
+        all_kfz.extend(v["kfz"] for v in direction_custom_dic.values())
 
     tmin = float(min(all_kfz))
     tmax = float(max(all_kfz))
@@ -924,6 +990,43 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     width_PKW_general = calculate_width(PKW_direction_general_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
     width_PKW_morning = calculate_width(PKW_Einheiten_traffic_morning, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
     width_PKW_afternoon = calculate_width(PKW_Einheiten_traffic_afternoon, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    
+    width_custom = None
+    width_PKW_custom = None
+    
+    kfz_custom = None
+    bike_custom = None
+    PKW_custom = None
+
+    side_custom = None
+    PKW_side_custom = None
+        
+    kfz_sv_custom = None
+    pkw_sv_custom = None
+
+    if direction_custom_dic is not None and PKW_Einheiten_traffic_custom is not None:
+        width_custom = calculate_width(direction_custom_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+        width_PKW_custom = calculate_width(PKW_Einheiten_traffic_custom, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+        
+        # reorder to present_dirs order (important!)
+        direction_custom_dic = {k: direction_custom_dic[k] for k in present_dirs}
+        PKW_Einheiten_traffic_custom = {k: PKW_Einheiten_traffic_custom[k] for k in present_dirs}
+
+        kfz_custom = np.array([direction_custom_dic[name]["kfz"] for name in present_dirs], dtype=float)
+        bike_custom = np.array([direction_custom_dic[name]["rad"] for name in present_dirs], dtype=float)
+        PKW_custom = np.array([PKW_Einheiten_traffic_custom[name]["PKW_Total"] for name in present_dirs], dtype=float)
+
+        side_custom = compute_side_sums(flows_present, kfz_custom)
+        PKW_side_custom = compute_side_sums(flows_present, PKW_custom)
+        
+        kfz_custom_sum = sum(value["kfz"] for value in direction_custom_dic.values())
+        kfz_custom_sv  = sum(value["Summe_SV"] for value in direction_custom_dic.values())
+        kfz_sv_custom = _sv_stats(kfz_custom_sum, kfz_custom_sv)
+
+        pkw_custom_sum = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_custom.values())
+        pkw_custom_sv  = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_custom.values())
+        pkw_sv_custom = _sv_stats(pkw_custom_sum, pkw_custom_sv)   
+
 
     present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
     if not present_dirnums:
@@ -968,10 +1071,15 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             "full_day_bike": float(direction_dic[name]["rad"]),
             "morning_peak_bike": float(direction_morning_dic[name]["rad"]),
             "afternoon_peak_bike": float(direction_afternoon_dic[name]["rad"]),
-        })
+        })  
+        
+        if direction_custom_dic is not None and PKW_Einheiten_traffic_custom is not None:
+            per_direction[-1]["custom_kfz"] = float(direction_custom_dic[name]["kfz"])
+            per_direction[-1]["custom_pkw"] = float(PKW_Einheiten_traffic_custom[name]["PKW_Total"])
+            per_direction[-1]["custom_bike"] = float(direction_custom_dic[name]["rad"]) 
     
     mode = mode.upper().strip()
-    use_pkw = (mode == "PKW")
+    use_pkw = mode.startswith("PKW")
 
     if use_pkw:
         flow_general   = PKW_general
@@ -1014,7 +1122,56 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     pngs.append(create_plot(flow_morning,   bike_morning,   width_morning_sel,   flows_present, verkehrszählungsort, suffix_morning,   morning_time_start,   morning_time_end,   side_colors, d_NS, d_WE))
     pngs.append(create_plot(flow_afternoon, bike_afternoon, width_afternoon_sel, flows_present, verkehrszählungsort, suffix_afternoon, afternoon_time_start, afternoon_time_end, side_colors, d_NS, d_WE))
 
+    if direction_custom_dic is not None:
+        if use_pkw:
+            flow_custom = PKW_custom
+            width_custom_sel = width_PKW_custom
+            suffix_custom = "custom_1h_PKW_Einheiten"
+            side_custom_sel = PKW_side_custom
+        else:
+            flow_custom = kfz_custom
+            width_custom_sel = width_custom
+            suffix_custom = "custom_1h"
+            side_custom_sel = side_custom
 
+        pngs.append(
+            create_plot(
+                flow_custom,
+                bike_custom,
+                width_custom_sel,
+                flows_present,
+                verkehrszählungsort,
+                suffix_custom,
+                custom_time_start,
+                custom_time_end,
+                side_colors,
+                d_NS,
+                d_WE,
+            )
+        )
+
+    
+    totals = {
+    "full_day_kfz": float(np.sum(kfz_general)),
+    "morning_peak_kfz": float(np.sum(kfz_morning)),
+    "afternoon_peak_kfz": float(np.sum(kfz_afternoon)),
+
+    "full_day_pkw": float(np.sum(PKW_general)),
+    "morning_peak_pkw": float(np.sum(PKW_morning)),
+    "afternoon_peak_pkw": float(np.sum(PKW_afternoon)),
+
+    "full_day_bike": float(np.sum(bike_general)),
+    "morning_peak_bike": float(np.sum(bike_morning)),
+    "afternoon_peak_bike": float(np.sum(bike_afternoon)),
+    }
+
+    # Add custom totals only if custom exists
+    if direction_custom_dic is not None:
+        if kfz_custom is not None and bike_custom is not None and PKW_custom is not None:
+            totals["custom_kfz"] = float(np.sum(kfz_custom))
+            totals["custom_pkw"] = float(np.sum(PKW_custom))
+            totals["custom_bike"] = float(np.sum(bike_custom))
+    
     meta = {
         "location": verkehrszählungsort,
         "mode": unit_label, 
@@ -1031,24 +1188,15 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
         "per_direction": per_direction,
 
         # totals now depend on selected mode
-        "totals": {
-            "full_day_kfz": float(np.sum(kfz_general)),
-            "morning_peak_kfz": float(np.sum(kfz_morning)),
-            "afternoon_peak_kfz": float(np.sum(kfz_afternoon)),
-
-            "full_day_pkw": float(np.sum(PKW_general)),
-            "morning_peak_pkw": float(np.sum(PKW_morning)),
-            "afternoon_peak_pkw": float(np.sum(PKW_afternoon)),
-
-            "full_day_bike": float(np.sum(bike_general)),
-            "morning_peak_bike": float(np.sum(bike_morning)),
-            "afternoon_peak_bike": float(np.sum(bike_afternoon)),
-        },
+        "totals": totals,
+    
+        "custom": ({"start": custom_time_start, "end": custom_time_end} if direction_custom_dic is not None else None),
 
         "by_side": {
             "full_day": side_general_sel,
             "morning_peak": side_morning_sel,
             "afternoon_peak": side_afternoon_sel,
+            **({"custom": side_custom_sel} if direction_custom_dic is not None else {}),
         },
         
         "sv": {
@@ -1056,11 +1204,13 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             "full_day": kfz_sv_full,
             "morning_peak": kfz_sv_morning,
             "afternoon_peak": kfz_sv_afternoon,
+             **({"custom": kfz_sv_custom} if kfz_sv_custom is not None else {})
         },
         "pkw": {
             "full_day": pkw_sv_full,
             "morning_peak": pkw_sv_morning,
             "afternoon_peak": pkw_sv_afternoon,
+            **({"custom": pkw_sv_custom} if pkw_sv_custom is not None else {}),
         },
     },
     }

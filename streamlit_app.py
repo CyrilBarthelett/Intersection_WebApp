@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timedelta
 from main import generate_png_from_excel
 
 #Run using the command: python -m streamlit run streamlit_app.py
@@ -54,6 +55,10 @@ TEXT = {
         "Plot morning peak": "Diagramm Morgenspitzenstunde",
         "Plot afternoon peak": "Diagramm Nachmittagsspitzenstunde",
         "Time window": "Zeitfenster",
+        "Define own 1h time window": "Definiere eigenes einstündiges Zeitfenster",
+        "Selected window" : "Ausgewähltes Zeitfenster",
+        "Start time": "Zeitbeginn",
+        "Plot selected window": "Diagramm ausgewählte Zeit"
     },
     "English": {
         "title": "Traffic Flow Plot Generator",
@@ -94,9 +99,26 @@ TEXT = {
         "Plot morning peak": "Plot morning peak",
         "Plot afternoon peak": "Plot afternoon peak",
         "Time window": "Time window",
+        "Define own 1h time window": "Define own 1h time window",
+        "Selected window": "Selected window",
+        "Start time": "Start time",
+        "Plot selected window": "Plot selected window"
     }
 }
 T = TEXT[lang_key]
+
+
+def time_list(start_hm: str, end_hm: str, step_min: int = 15):
+    """Return list of 'HH:MM' strings inclusive, stepping by step_min."""
+    t0 = datetime.strptime(start_hm, "%H:%M")
+    t1 = datetime.strptime(end_hm, "%H:%M")
+    out = []
+    t = t0
+    while t <= t1:
+        out.append(t.strftime("%H:%M"))
+        t += timedelta(minutes=step_min)
+    return out
+
 
 # --------------------------------------------------
 # Page title and instructions
@@ -139,6 +161,35 @@ d_WE_value = st.sidebar.slider(
     step=0.05,
 )
 
+st.sidebar.header(T["Time window"])
+
+use_custom = st.sidebar.checkbox(T["Define own 1h time window"], value=False)
+
+custom_start_time = None
+custom_end_time = None
+
+start_options = time_list("05:00", "21:00", 15)
+
+if use_custom:
+    custom_start_time = st.sidebar.selectbox(
+        "Start time",
+        start_options,
+        index=None,  
+        placeholder="Select a start time",
+        key="start_time_1h",
+    )
+
+    # Only show selected window if user picked something
+    if custom_start_time is not None:
+        start_dt = datetime.strptime(custom_start_time, "%H:%M")
+        custom_end_time = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+
+        st.sidebar.markdown(
+            f"{T["Selected window"]}: {custom_start_time} – {custom_end_time}"
+        )
+else:
+    st.sidebar.selectbox(T["Start time"], start_options, disabled=True, key="start_time_disabled")
+
 # --------------------------------------------------
 # File uploader widget
 # --------------------------------------------------
@@ -155,7 +206,7 @@ if uploaded:
             excel_bytes = uploaded.read()
 
             # Generate PNG images and filenames
-            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value, mode = mode)
+            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value, mode = mode, use_custom_window=use_custom and (custom_start_time is not None), custom_start_time=custom_start_time)
 
             # Success message
             st.success(T["done"])
@@ -168,16 +219,31 @@ if uploaded:
             
             st.subheader(T.get("peak_info", T["Time window"]))
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown(f"**{T['Full day']}**")
-                st.write(f"{meta['day']['start']} – {meta['day']['end']}")
-            with c2:
-                st.markdown(f"**{T['Morning peak']}**")
-                st.write(f"{meta['morning_peak']['start']} – {meta['morning_peak']['end']}")
-            with c3:
-                st.markdown(f"**{T['Afternoon peak']}**")
-                st.write(f"{meta['afternoon_peak']['start']} – {meta['afternoon_peak']['end']}")
+            if meta.get("custom") is None:
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown(f"**{T['Full day']}**")
+                    st.write(f"{meta['day']['start']} – {meta['day']['end']}")
+                with c2:
+                    st.markdown(f"**{T['Morning peak']}**")
+                    st.write(f"{meta['morning_peak']['start']} – {meta['morning_peak']['end']}")
+                with c3:
+                    st.markdown(f"**{T['Afternoon peak']}**")
+                    st.write(f"{meta['afternoon_peak']['start']} – {meta['afternoon_peak']['end']}")
+            else:
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.markdown(f"**{T['Full day']}**")
+                    st.write(f"{meta['day']['start']} – {meta['day']['end']}")
+                with c2:
+                    st.markdown(f"**{T['Morning peak']}**")
+                    st.write(f"{meta['morning_peak']['start']} – {meta['morning_peak']['end']}")
+                with c3:
+                    st.markdown(f"**{T['Afternoon peak']}**")
+                    st.write(f"{meta['afternoon_peak']['start']} – {meta['afternoon_peak']['end']}")
+                with c4:
+                    st.markdown(f"**{T["Selected window"]}**")
+                    st.write(f"{meta['custom']['start']} – {meta['custom']['end']}")
 
             st.divider()
                     
@@ -196,6 +262,14 @@ if uploaded:
                 f"full_day_{flow_col}", f"morning_peak_{flow_col}", f"afternoon_peak_{flow_col}",
                 "full_day_bike", "morning_peak_bike", "afternoon_peak_bike"
             ]
+            
+            has_custom = meta.get("custom") is not None
+            if has_custom:
+                cols_to_int += [f"custom_{flow_col}", "custom_bike"]
+
+            for c in cols_to_int:
+                df[c] = df[c].round(0).astype(int)
+            
             for c in cols_to_int:
                 df[c] = df[c].round(0).astype(int)
 
@@ -208,22 +282,46 @@ if uploaded:
                 f"{T['Afternoon peak']} ({mode} | {T['Bicycle']})":
                     df[f"afternoon_peak_{flow_col}"].astype(str) + " | " + df["afternoon_peak_bike"].astype(str),
             })
+            
+            if has_custom:
+                df_out[f"{T.get('Custom window','Custom window')} ({mode} | {T['Bicycle']})"] = \
+                    df[f"custom_{flow_col}"].astype(str) + " | " + df["custom_bike"].astype(str)
             st.dataframe(df_out, use_container_width=True, hide_index=True)
 
             # Totals (mode-dependent)
-            t1, t2, t3 = st.columns(3)
+            if not has_custom:
+                t1, t2, t3 = st.columns(3)
 
-            with t1:
-                st.markdown(f"**{T['Total full day']} ({mode} | {T['Bicycle']})**")
-                st.write(f"{int(round(meta['totals'][f'full_day_{flow_col}']))} | {int(round(meta['totals']['full_day_bike']))}")
+                with t1:
+                    st.markdown(f"**{T['Total full day']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'full_day_{flow_col}']))} | {int(round(meta['totals']['full_day_bike']))}")
 
-            with t2:
-                st.markdown(f"**{T['Total morning peak']} ({mode} | {T['Bicycle']})**")
-                st.write(f"{int(round(meta['totals'][f'morning_peak_{flow_col}']))} | {int(round(meta['totals']['morning_peak_bike']))}")
+                with t2:
+                    st.markdown(f"**{T['Total morning peak']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'morning_peak_{flow_col}']))} | {int(round(meta['totals']['morning_peak_bike']))}")
 
-            with t3:
-                st.markdown(f"**{T['Total afternoon peak']} ({mode} | {T['Bicycle']})**")
-                st.write(f"{int(round(meta['totals'][f'afternoon_peak_{flow_col}']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
+                with t3:
+                    st.markdown(f"**{T['Total afternoon peak']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'afternoon_peak_{flow_col}']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
+                
+            else:
+                t1, t2, t3, t4 = st.columns(4)   
+
+                with t1:
+                    st.markdown(f"**{T['Total full day']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'full_day_{flow_col}']))} | {int(round(meta['totals']['full_day_bike']))}")
+
+                with t2:
+                    st.markdown(f"**{T['Total morning peak']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'morning_peak_{flow_col}']))} | {int(round(meta['totals']['morning_peak_bike']))}")
+
+                with t3:
+                    st.markdown(f"**{T['Total afternoon peak']} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'afternoon_peak_{flow_col}']))} | {int(round(meta['totals']['afternoon_peak_bike']))}")
+                    
+                with t4:
+                    st.markdown(f"**{T["Selected window"]} ({mode} | {T['Bicycle']})**")
+                    st.write(f"{int(round(meta['totals'][f'custom_{flow_col}']))} | {int(round(meta['totals']['custom_bike']))}")
 
             # Side table (mode-dependent labels)
 
@@ -246,7 +344,7 @@ if uploaded:
             def pct(x):
                 return f"{x:.2f}%"
 
-            df_sv = pd.DataFrame([
+            rows = [
                 {
                     "Time window": T["Full day"],
                     f"Total {mode}": int(round(sv_block["full_day"]["total"])),
@@ -265,22 +363,44 @@ if uploaded:
                     f"SV {mode}": int(round(sv_block["afternoon_peak"]["sv"])),
                     "SV share (%)": pct(sv_block["afternoon_peak"]["sv_share_pct"]),
                 },
-            ])
+            ]
+            
+            if meta.get("custom") is not None:
+                rows.append({
+                    "Time window": T["Selected window"],
+                    f"Total {mode}": int(round(sv_block["custom"]["total"])),
+                    f"SV {mode}": int(round(sv_block["custom"]["sv"])),
+                    "SV share (%)": pct(sv_block["custom"]["sv_share_pct"]),
+                })
 
+            df_sv = pd.DataFrame(rows)
             st.dataframe(df_sv, use_container_width=True, hide_index=True)
             
             # Display each generated image with download button
-            plot_titles = [
-                T["Plot general day"],
-                T["Plot morning peak"],
-                T["Plot afternoon peak"]
+            # Display each generated image with download button
+
+            time_windows = [
+                f"{meta['day']['start']} – {meta['day']['end']}",
+                f"{meta['morning_peak']['start']} – {meta['morning_peak']['end']}",
+                f"{meta['afternoon_peak']['start']} – {meta['afternoon_peak']['end']}",
             ]
 
-            for i, (png_bytes, out_name) in enumerate(png_list):
+            plot_titles = [
+                T["Plot general day"],
+                T["Plot morning peak"],     
+                T["Plot afternoon peak"],
+            ]
+
+            # Add custom if present
+            if meta.get("custom") is not None:
+                time_windows.append(f"{meta['custom']['start']} – {meta['custom']['end']}")
+                plot_titles.append(T.get("Plot custom", "Plot custom window"))
+
+            for (png_bytes, out_name), title, tw in zip(png_list, plot_titles, time_windows):
                 title_col, button_col = st.columns([1, 0.2], vertical_alignment="center")
 
                 with title_col:
-                    st.markdown(f"### {plot_titles[i]} ({time_windows[i]})")
+                    st.markdown(f"### {title} ({tw})")
 
                 with button_col:
                     st.download_button(
@@ -294,7 +414,7 @@ if uploaded:
 
                 st.image(png_bytes, use_container_width=True)
                 st.divider()
-
+                
         except Exception as e:
             # Display error if anything goes wrong
             st.error(f"Error: {e}")
