@@ -172,7 +172,7 @@ start_options = time_list("05:00", "21:00", 15)
 
 if use_custom:
     custom_start_time = st.sidebar.selectbox(
-        "Start time",
+        T["Start time"],
         start_options,
         index=None,  
         placeholder="Select a start time",
