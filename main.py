@@ -747,16 +747,39 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     ws_deckblatt = wb["Deckbl."]
     verkehrszählungsort = ws_deckblatt["C8"].value
 
+    # Load sheets for peak calculation
+    sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
+    
+    first_R_df = None 
+    for sheet_name, df in sheets.items():
+        if sheet_name.startswith("R"):
+                if first_R_df is None:
+                    first_R_df = df
+                    
+    summe_idx = None
+    if first_R_df is None:
+            raise ValueError("No R sheets found – first_R_df was never assigned")
+    for i, val in enumerate(first_R_df.iloc[:, 0]):
+        if isinstance(val, str) and "SUMME" in val.upper():
+            summe_idx = i
+            break
+    
+    if summe_idx is None:
+        raise ValueError("SUMME row not found")
+    
+    summe_row_number = summe_idx+1
+
     # Read directions
     direction_dic = {}
     for sheet_name in wb.sheetnames:
         if sheet_name.startswith("R"):
             ws = wb[sheet_name]
+            total = ws[f"B{summe_row_number}"].value + ws[f"C{summe_row_number}"].value + ws[f"D{summe_row_number}"].value + ws[f"E{summe_row_number}"].value + ws[f"F{summe_row_number}"].value + ws[f"G{summe_row_number}"].value  + ws[f"H{summe_row_number}"].value  + ws[f"I{summe_row_number}"].value
             direction_dic[sheet_name] = {
-                "total": ws["J82"].value,
-                "kfz": ws["J82"].value - ws["B82"].value,
-                "rad": ws["B82"].value,
-                "Summe_SV": ws["E82"].value + ws["F82"].value + ws["G82"].value  + ws["H82"].value  + ws["I82"].value
+                "total": total,
+                "kfz": total - ws[f"B{summe_row_number}"].value,
+                "rad": ws[f"B{summe_row_number}"].value,
+                "Summe_SV": ws[f"E{summe_row_number}"].value + ws[f"F{summe_row_number}"].value + ws[f"G{summe_row_number}"].value  + ws[f"H{summe_row_number}"].value  + ws[f"I{summe_row_number}"].value
             }
     
     #PKW Einheiten
@@ -764,35 +787,27 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     for sheet_name in wb.sheetnames:
         if sheet_name.startswith("R"):
             ws = wb[sheet_name]
-            rad = ws["B82"].value * faktor_rad
-            einsp = ws["C82"].value
-            PKW = ws["D82"].value
-            Linienbus = ws["E82"].value * faktor_Linienbus
-            Reisebus = ws["F82"].value * faktor_Linienbus
-            LKW = ws["G82"].value * faktor_Linienbus
-            LKW_Anh = ws["H82"].value * faktor_lkwAnh
-            sons = ws["I82"].value * faktor_sonst
+            rad = ws[f"B{summe_row_number}"].value * faktor_rad
+            einsp = ws[f"C{summe_row_number}"].value
+            PKW = ws[f"D{summe_row_number}"].value
+            Linienbus = ws[f"E{summe_row_number}"].value * faktor_Linienbus
+            Reisebus = ws[f"F{summe_row_number}"].value * faktor_Linienbus
+            LKW = ws[f"G{summe_row_number}"].value * faktor_Linienbus
+            LKW_Anh = ws[f"H{summe_row_number}"].value * faktor_lkwAnh
+            sons = ws[f"I{summe_row_number}"].value * faktor_sonst
             PKW_direction_general_dic[sheet_name] = {
                 "PKW_Total": round(rad + einsp + PKW + Linienbus + Reisebus + LKW + LKW_Anh + sons),
                 "Summe_SV": round(Linienbus + Reisebus + LKW + LKW_Anh + sons)
             }
-
-    
-    # Load sheets for peak calculation
-    sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
-    
-    first_R_df = None
     
     # Find peaks
     kfz_morning_peak = 0
     kfz_afternoon_peak = 0
-    for idx in range(13, 77+1):  # sliding window of 4 rows
+    for idx in range(13, summe_idx-3):  # sliding window of 4 rows
         kfz_block_sum = 0
         
         for sheet_name, df in sheets.items():
             if sheet_name.startswith("R"):
-                if first_R_df is None:
-                    first_R_df = df
                 kfz_sheet_block_sum = df.iloc[idx:idx+4, 2:9].sum().sum()
                 kfz_block_sum += kfz_sheet_block_sum
                 
@@ -802,30 +817,28 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
         time_start = first_R_df.iloc[idx, 0]
         time_end   = first_R_df.iloc[idx+3, 0]
 
-        if idx < 40 and kfz_block_sum > kfz_morning_peak:
+        if idx < summe_idx/2 and kfz_block_sum > kfz_morning_peak:
             kfz_morning_peak = kfz_block_sum
             morning_time_start = time_start
             morning_time_end = time_end
             morning_start_idx = idx
 
-        if idx >= 40 and kfz_block_sum > kfz_afternoon_peak:
+        if idx >= summe_idx/2 and kfz_block_sum > kfz_afternoon_peak:
             kfz_afternoon_peak = kfz_block_sum
             afternoon_time_start = time_start
             afternoon_time_end = time_end
             afternoon_peak_start_idx = idx
-
     
     col = 1
-    start = 13   # Excel row 14
-    end = 80     # Excel row 81 (inclusive)
 
     first_idx = None
     last_idx = None
     started = False
+    
     if first_R_df is None:
         raise ValueError("No R sheets found – first_R_df was never assigned")
 
-    for row_idx in range(start, end + 1):
+    for row_idx in range(13, summe_idx):
         current_value = first_R_df.iloc[row_idx, col]
 
         if pd.notna(current_value) and not started:

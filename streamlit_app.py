@@ -111,7 +111,7 @@ st.write(T["upload"])
 st.sidebar.header(T["units"])
 mode = st.sidebar.radio(
     T["show_flows"],
-    options=["KFZ", "PKW"],
+    options=["KFZ", "PKW-E"],
     help=T["unit_explanation"]
 )
 
@@ -159,6 +159,12 @@ if uploaded:
 
             # Success message
             st.success(T["done"])
+            
+            time_windows = [
+            f"{meta['day']['start']} – {meta['day']['end']}",
+            f"{meta['morning_peak']['start']} – {meta['morning_peak']['end']}",
+            f"{meta['afternoon_peak']['start']} – {meta['afternoon_peak']['end']}",
+            ]
             
             st.subheader(T.get("peak_info", T["Time window"]))
 
@@ -274,7 +280,7 @@ if uploaded:
                 title_col, button_col = st.columns([1, 0.2], vertical_alignment="center")
 
                 with title_col:
-                    st.markdown(f"### {plot_titles[i]}")
+                    st.markdown(f"### {plot_titles[i]} ({time_windows[i]})")
 
                 with button_col:
                     st.download_button(
