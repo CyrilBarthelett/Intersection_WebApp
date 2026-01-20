@@ -19,9 +19,6 @@ from datetime import datetime, timedelta
 
 
 # --------------------- CONFIG ---------------------
-# Minimum/maximum thickness for flow bands 
-width_min = 0.1
-width_max = 1.1
 
 #PKW_Einheiten faktors
 faktor_rad = 0.5
@@ -269,7 +266,7 @@ def compute_side_sums(flows_present, kfz_array):
         "total_kfz": total_kfz,
     }
 
-def calculate_width(direction_dic, tmin, tmax, gamma=1.0, PKW_Einheiten=False):
+def calculate_width(direction_dic, width_min, width_max, tmin, tmax, gamma=1.0, PKW_Einheiten=False):
     """
     Calculate width array based on KFZ values using a GLOBAL mapping:
       - tmin -> width_min
@@ -783,12 +780,11 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, w_min: float = 0.1, w_max: float = 1.1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
-
     ws_deckblatt = wb["Deckbl."]
     verkehrszählungsort = ws_deckblatt["C8"].value
-
+    
     # Load sheets for peak calculation
     sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
     
@@ -1025,12 +1021,12 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     # --- Calculate widths on shared scale ---
     gamma = 0.5  # <--- more resolution; set to 1.0 for strict linear
 
-    width_general = calculate_width(direction_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_morning_peak = calculate_width(direction_morning_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_afternoon_peak = calculate_width(direction_afternoon_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_PKW_general = calculate_width(PKW_direction_general_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
-    width_PKW_morning = calculate_width(PKW_Einheiten_traffic_morning, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
-    width_PKW_afternoon = calculate_width(PKW_Einheiten_traffic_afternoon, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    width_general = calculate_width(direction_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_morning_peak = calculate_width(direction_morning_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_afternoon_peak = calculate_width(direction_afternoon_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+    width_PKW_general = calculate_width(PKW_direction_general_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    width_PKW_morning = calculate_width(PKW_Einheiten_traffic_morning,w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    width_PKW_afternoon = calculate_width(PKW_Einheiten_traffic_afternoon, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
     
     width_custom = None
     width_PKW_custom = None
@@ -1046,8 +1042,8 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     pkw_sv_custom = None
 
     if direction_custom_dic is not None and PKW_Einheiten_traffic_custom is not None:
-        width_custom = calculate_width(direction_custom_dic, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-        width_PKW_custom = calculate_width(PKW_Einheiten_traffic_custom, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+        width_custom = calculate_width(direction_custom_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
+        width_PKW_custom = calculate_width(PKW_Einheiten_traffic_custom, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
         
         # reorder to present_dirs order (important!)
         direction_custom_dic = {k: direction_custom_dic[k] for k in present_dirs}
@@ -1249,4 +1245,39 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     },
     }
     
+    return pngs, svgs, meta
+
+def generate_plots_from_direction_values(
+    direction_values: Dict[str, Dict[str, float]],  # e.g. {"R1":{"kfz":120,"rad":15}, ...}
+    location: str = "Manual Input",
+    side_colors: Optional[Dict[str, str]] = None,
+    d_NS: float = 1.5,
+    d_WE: float = 1.5,
+    w_min: float = 0.1,
+    w_max: float = 1.1,
+    mode: str = "KFZ",
+) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
+    
+    # keep only R1..R12 that exist
+    present_dirnums = sorted(int(k[1:]) for k in direction_values.keys() if k.startswith("R"))
+    present_dirs = [f"R{i}" for i in present_dirnums]
+    flows_present = [DIR_TO_FLOW[i] for i in present_dirnums]
+
+    # build ordered arrays
+    kfz = np.array([direction_values[r]["kfz"] for r in present_dirs], dtype=float)
+    bike = np.array([direction_values[r].get("rad", 0.0) for r in present_dirs], dtype=float)
+
+    # width scaling (use kfz or pkw depending on mode)
+    tmin, tmax = float(kfz.min()), float(kfz.max())
+    gamma = 0.5
+    tmp_dic = {r: {"kfz": direction_values[r]["kfz"], "PKW_Total": direction_values[r]["kfz"]} for r in present_dirs}
+
+    use_pkw = mode.upper().startswith("PKW")
+    widths = calculate_width(tmp_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=use_pkw)
+
+    # you may not have morning/afternoon in manual mode; simplest: produce one "full_day" plot
+    pngs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="png")]
+    svgs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="svg")]
+
+    meta = {"location": location, "mode": mode, "per_direction": direction_values}
     return pngs, svgs, meta
