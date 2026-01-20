@@ -206,7 +206,7 @@ if uploaded:
             excel_bytes = uploaded.read()
 
             # Generate PNG images and filenames
-            png_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value, mode = mode, use_custom_window=use_custom and (custom_start_time is not None), custom_start_time=custom_start_time)
+            png_list, svg_list, meta = generate_png_from_excel(excel_bytes, side_colors, d_NS=d_NS_value, d_WE=d_WE_value, mode = mode, use_custom_window=use_custom and (custom_start_time is not None), custom_start_time=custom_start_time)
 
             # Success message
             st.success(T["done"])
@@ -396,23 +396,33 @@ if uploaded:
                 time_windows.append(f"{meta['custom']['start']} – {meta['custom']['end']}")
                 plot_titles.append(T.get("Plot custom", "Plot custom window"))
 
-            for (png_bytes, out_name), title, tw in zip(png_list, plot_titles, time_windows):
-                title_col, button_col = st.columns([1, 0.2], vertical_alignment="center")
+            for (png_bytes, png_name), (svg_bytes, svg_name), title, tw in zip(png_list, svg_list, plot_titles, time_windows):
+                title_col, btn_png_col, btn_svg_col = st.columns([1, 0.2, 0.2], vertical_alignment="center")
 
                 with title_col:
                     st.markdown(f"### {title} ({tw})")
 
-                with button_col:
+                with btn_png_col:
                     st.download_button(
-                        label=f"{T['download']}",
+                        label=f"{T['download']} PNG",
                         data=png_bytes,
-                        file_name=out_name,
+                        file_name=png_name,
                         mime="image/png",
-                        key=f"dl_{out_name}",
+                        key=f"dl_png_{png_name}",
                         use_container_width=True
                     )
 
-                st.image(png_bytes, use_container_width=True)
+                with btn_svg_col:
+                    st.download_button(
+                        label=f"{T['download']} SVG",
+                        data=svg_bytes,
+                        file_name=svg_name,
+                        mime="image/svg+xml",
+                        key=f"dl_svg_{svg_name}",
+                        use_container_width=True
+                    )
+
+                st.image(png_bytes, use_container_width=True)  # keep preview as PNG (faster, consistent)
                 st.divider()
                 
         except Exception as e:

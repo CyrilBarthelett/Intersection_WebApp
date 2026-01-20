@@ -20,8 +20,8 @@ from datetime import datetime, timedelta
 
 # --------------------- CONFIG ---------------------
 # Minimum/maximum thickness for flow bands 
-width_min = 0.02
-width_max = 0.9
+width_min = 0.1
+width_max = 1.1
 
 #PKW_Einheiten faktors
 faktor_rad = 0.5
@@ -612,7 +612,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
                 clip_on=False
             )
 
-def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png"):
     """Create a PNG plot for given traffic and width data.
     kfz: numpy array of KFZ flow magnitudes aligned with flows_present
     bike: numpy array of bicycle flow magnitudes aligned with flows_present
@@ -736,7 +736,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
             add_group_arrow(
                 ax, P, W, ids_dep, side,
                 outward=False, color="k",
-                label=dep_label, label_color="white", label_fontsize=6
+                label=dep_label, label_color="white", label_fontsize=5
             )
 
         ids_arr = GROUP_ACTIVE[(side, "arr")]
@@ -745,7 +745,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
             add_group_arrow(
                 ax, P, W, ids_arr, side,
                 outward=True, color="k",
-                label=arr_label, label_color="white", label_fontsize=6
+                label=arr_label, label_color="white", label_fontsize=5
             )
             total_val = int(round(total_kfz_by_side.get(side, 0.0)))
             add_side_span_line_and_total(
@@ -770,17 +770,20 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     ax.set_ylim(-R - pad, R + pad)
     ax.set_axis_off()
 
-    # Return PNG bytes (no filesystem)
+    # Return bytes (no filesystem)
     buf = io.BytesIO()                  #raw bytes like a file (so you can read Excel and write PNGs without saving to disk)
-    fig.savefig(buf, format="png", transparent=True, bbox_inches="tight", dpi=300)
+    if fmt in ("png", "jpg", "jpeg"):  
+        fig.savefig(buf, format=fmt, transparent=True, bbox_inches="tight", dpi=300)
+    else:
+        fig.savefig(buf, format=fmt, transparent=True, bbox_inches="tight")
+    
     plt.close(fig)
-
     safe_name = re.sub(r"[^\w\-]+", "_", str(verkehrszählungsort))
-    filename = f"VZ_{safe_name}_{suffix}_{start_time}_{end_time}.png"
+    filename = f"VZ_{safe_name}_{suffix}_{start_time}_{end_time}.{fmt}"
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
 
     ws_deckblatt = wb["Deckbl."]
@@ -1156,9 +1159,16 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     
     # Generate three plots
     pngs = []
-    pngs.append(create_plot(flow_general,   bike_general,   width_general_sel,   flows_present, verkehrszählungsort, suffix_general,   day_start_time,       day_end_time,       side_colors, d_NS, d_WE))
-    pngs.append(create_plot(flow_morning,   bike_morning,   width_morning_sel,   flows_present, verkehrszählungsort, suffix_morning,   morning_time_start,   morning_time_end,   side_colors, d_NS, d_WE))
-    pngs.append(create_plot(flow_afternoon, bike_afternoon, width_afternoon_sel, flows_present, verkehrszählungsort, suffix_afternoon, afternoon_time_start, afternoon_time_end, side_colors, d_NS, d_WE))
+    svgs = []
+    def _add_both(flow, bike, w, suffix, start, end):
+        pngs.append(create_plot(flow, bike, w, flows_present, verkehrszählungsort,
+                                suffix, start, end, side_colors, d_NS, d_WE, fmt="png"))
+        svgs.append(create_plot(flow, bike, w, flows_present, verkehrszählungsort,
+                                suffix, start, end, side_colors, d_NS, d_WE, fmt="svg"))
+
+    _add_both(flow_general,   bike_general,   width_general_sel,   suffix_general,   day_start_time,       day_end_time)
+    _add_both(flow_morning,   bike_morning,   width_morning_sel,   suffix_morning,   morning_time_start,   morning_time_end)
+    _add_both(flow_afternoon, bike_afternoon, width_afternoon_sel, suffix_afternoon, afternoon_time_start, afternoon_time_end)
 
     if direction_custom_dic is not None:
         if use_pkw:
@@ -1172,21 +1182,7 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
             suffix_custom = "custom_1h"
             side_custom_sel = side_custom
 
-        pngs.append(
-            create_plot(
-                flow_custom,
-                bike_custom,
-                width_custom_sel,
-                flows_present,
-                verkehrszählungsort,
-                suffix_custom,
-                custom_time_start,
-                custom_time_end,
-                side_colors,
-                d_NS,
-                d_WE,
-            )
-        )
+        _add_both(flow_custom, bike_custom, width_custom_sel, suffix_custom, custom_time_start, custom_time_end)
 
     
     totals = {
@@ -1253,4 +1249,4 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     },
     }
     
-    return pngs, meta
+    return pngs, svgs, meta
