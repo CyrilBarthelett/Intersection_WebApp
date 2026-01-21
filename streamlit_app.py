@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 from datetime import datetime, timedelta
 from main import generate_png_from_excel, generate_plots_from_direction_values
 
@@ -20,12 +21,12 @@ TEXT = {
     "Deutsch": {
         "title": "Verkehrsfluss-Diagramm Generator",
         "excel": "Excel-Datei hochladen (.xlsx)",
-        "upload": "Lade eine Excel-Datei mit Verkehrszählungen (.xlsx) hoch und lade das erzeugte PNG herunter.",
+        "upload": "Lade eine Excel-Datei mit Verkehrszählungen (.xlsx) hoch und lade das erzeugte PNG oder SVG herunter.",
         "done": "Fertig!",
         "units": "Einheiten",
         "show_flows": "Flüsse anzeigen als",
         "unit_explanation": "KFZ = Kraftfahrzeuge. PKW = Pkw-Einheiten.",
-        "colors": "Strömfarben",
+        "colors": "Stromfarben",
         "Nord": "Norden",
         "Ost": "Osten",
         "Süd": "Süden",
@@ -51,7 +52,7 @@ TEXT = {
         "Arriving": "Ankommend",
         "Total": "Summe",
         "Side": "Himmelsrichtung",
-        "Totals & SV share": "Gesamtverkehr & Sonderverkehrssanteil (SV)",
+        "Totals & SV share": "Gesamtverkehr & Schwerverkehrssanteil (SV)",
         "Plot general day": "Diagramm ganzer Tag",
         "Plot morning peak": "Diagramm Morgenspitzenstunde",
         "Plot afternoon peak": "Diagramm Nachmittagsspitzenstunde",
@@ -69,12 +70,15 @@ TEXT = {
         "Custom window": "Eigenes Zeitfenster",
         "Width" : "Strombreiten-Skala",
         "Wmin" : "Minimale Strombreite",
-        "Wmax" : "Maximale Strombreite"
+        "Wmax" : "Maximale Strombreite",
+        "SV share" : "SV-Anteil",
+        "Upload simple Excel or directly add inputs into the table": "Laden Sie eine einfache Excel-Datei hoch oder geben Sie die Daten direkt in die Tabelle ein",
+        "Excel with the desired flow inputs in the first 12 rows, first column": "Excel mit den gewünschten Strominputs in den ersten 12 Reihen, erste Spalte"
     },
     "English": {
         "title": "Traffic Flow Plot Generator",
         "excel": "Upload Excel file (.xlsx)",
-        "upload": "Upload an Excel traffic count file (`.xlsx`) and download the generated PNG.",
+        "upload": "Upload an Excel traffic count file (`.xlsx`) and download the generated PNG or SVG.",
         "done": "Done!",
         "units": "Units",
         "show_flows": "Show flows as",
@@ -123,7 +127,10 @@ TEXT = {
         "Custom window": "Custom window",
         "Width" : "Flow width range",
         "Wmin" : "Minimum flow width",
-        "Wmax" : "Maximum flow width"
+        "Wmax" : "Maximum flow width",
+        "SV share" : "SV share",
+        "Upload simple Excel or directly add inputs into the table": "Upload simple Excel or directly add inputs into the table",
+        "Excel with the desired flow inputs in the first 12 rows, first column": "Excel with the desired flow inputs in the first 12 rows, first column"
     },
 }
 
@@ -223,6 +230,27 @@ def show_download_and_preview_block(png_list, svg_list, titles, time_windows, T)
 
         st.image(png_bytes, use_container_width=True)
         st.divider()
+        
+        
+def load_simple_manual_excel(excel_bytes: bytes) -> list[float]:
+    """
+    Reads an .xlsx with a single column and (at least) 12 rows.
+    Returns a list of 12 floats for R1..R12.
+    """
+    # read first sheet, no header
+    df = pd.read_excel(io.BytesIO(excel_bytes), header=None)
+
+    # take first column, first 12 rows
+    col = df.iloc[:12, 0]
+
+    # convert NaN -> 0, convert to float
+    values = pd.to_numeric(col, errors="coerce").fillna(0).astype(float).tolist()
+
+    # pad if file has fewer than 12 rows
+    if len(values) < 12:
+        values += [0.0] * (12 - len(values))
+
+    return values[:12]
 
 
 # ==================================================
@@ -300,6 +328,30 @@ if not manual_mode:
 init_manual_state()
 
 if manual_mode:
+    
+    st.markdown(T["Upload simple Excel or directly add inputs into the table"])
+    simple_uploaded = st.file_uploader(
+        T["Excel with the desired flow inputs in the first 12 rows, first column"],
+        type=["xlsx"],
+        key="simple_manual_excel",
+    )
+
+    if simple_uploaded is not None:
+        try:
+            vals = load_simple_manual_excel(simple_uploaded.read())
+
+            new_df = st.session_state["manual_df"].copy()
+            new_df["KFZ"] = [int(round(v)) for v in vals]
+            new_df["Bicycle"] = [0] * 12
+            st.session_state["manual_df"] = new_df
+
+            st.session_state["manual_generate_clicked"] = True
+            if "manual_editor" in st.session_state:
+                del st.session_state["manual_editor"]
+
+        except Exception as e:
+            st.error(f"Could not read simple manual Excel: {e}")
+    
     st.subheader(T["User direction inputs (R1–R12)"])
 
     # Editable table (persists via session_state["manual_df"])
@@ -594,19 +646,19 @@ rows = [
         "Time window": T["Full day"],
         f"Total {mode}": int(round(sv_block["full_day"]["total"])),
         f"SV {mode}": int(round(sv_block["full_day"]["sv"])),
-        "SV share (%)": pct(sv_block["full_day"]["sv_share_pct"]),
+        f"{T['SV share']} (%)": pct(sv_block["full_day"]["sv_share_pct"]),
     },
     {
         "Time window": T["Morning peak"],
         f"Total {mode}": int(round(sv_block["morning_peak"]["total"])),
         f"SV {mode}": int(round(sv_block["morning_peak"]["sv"])),
-        "SV share (%)": pct(sv_block["morning_peak"]["sv_share_pct"]),
+        f"{T['SV share']} (%)": pct(sv_block["morning_peak"]["sv_share_pct"]),
     },
     {
         "Time window": T["Afternoon peak"],
         f"Total {mode}": int(round(sv_block["afternoon_peak"]["total"])),
         f"SV {mode}": int(round(sv_block["afternoon_peak"]["sv"])),
-        "SV share (%)": pct(sv_block["afternoon_peak"]["sv_share_pct"]),
+        f"{T['SV share']} (%)": pct(sv_block["afternoon_peak"]["sv_share_pct"]),
     },
 ]
 if has_custom:
