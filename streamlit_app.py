@@ -73,7 +73,7 @@ TEXT = {
         "Wmax" : "Maximale Strombreite",
         "SV share" : "SV-Anteil",
         "Upload simple Excel or directly add inputs into the table": "Laden Sie eine einfache Excel-Datei hoch oder geben Sie die Daten direkt in die Tabelle ein",
-        "Excel with the desired flow inputs in the first 12 rows, first column": "Excel mit den gewünschten Strominputs in den ersten 12 Reihen, erste Spalte"
+        "Excel with the desired flow inputs": "Excel mit den gewünschten Strominputs"
     },
     "English": {
         "title": "Traffic Flow Plot Generator",
@@ -130,7 +130,7 @@ TEXT = {
         "Wmax" : "Maximum flow width",
         "SV share" : "SV share",
         "Upload simple Excel or directly add inputs into the table": "Upload simple Excel or directly add inputs into the table",
-        "Excel with the desired flow inputs in the first 12 rows, first column": "Excel with the desired flow inputs in the first 12 rows, first column"
+        "Excel with the desired flow inputs": "Excel with the desired flow inputs"
     },
 }
 
