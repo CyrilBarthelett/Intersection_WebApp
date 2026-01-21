@@ -232,25 +232,32 @@ def show_download_and_preview_block(png_list, svg_list, titles, time_windows, T)
         st.divider()
         
         
-def load_simple_manual_excel(excel_bytes: bytes) -> list[float]:
+def load_simple_manual_excel(excel_bytes: bytes) -> pd.DataFrame:
     """
-    Reads an .xlsx with a single column and (at least) 12 rows.
-    Returns a list of 12 floats for R1..R12.
+    Reads an .xlsx where:
+      - Column A: Direction (R1..R12)
+      - Column B: KFZ/PKW-E
+      - Column C: Rad
+    Returns a DataFrame with columns: Direction, KFZ, Bicycle (12 rows).
     """
-    # read first sheet, no header
-    df = pd.read_excel(io.BytesIO(excel_bytes), header=None)
+    df = pd.read_excel(io.BytesIO(excel_bytes), header=0)  # first row is header
 
-    # take first column, first 12 rows
-    col = df.iloc[:12, 0]
+    # Keep only first 12 rows (R1..R12)
+    df = df.iloc[:12].copy()
 
-    # convert NaN -> 0, convert to float
-    values = pd.to_numeric(col, errors="coerce").fillna(0).astype(float).tolist()
+    # Rename columns to match your manual_df
+    # Your Excel headers are: 'KFZ/PKW-E' and 'Rad'
+    df = df.rename(columns={
+        df.columns[0]: "Direction",
+        "KFZ/PKW-E": "KFZ",
+        "Rad": "Bicycle",
+    })
 
-    # pad if file has fewer than 12 rows
-    if len(values) < 12:
-        values += [0.0] * (12 - len(values))
+    # Safety: if user leaves cells empty
+    df["KFZ"] = pd.to_numeric(df["KFZ"], errors="coerce").fillna(0).astype(int)
+    df["Bicycle"] = pd.to_numeric(df["Bicycle"], errors="coerce").fillna(0).astype(int)
 
-    return values[:12]
+    return df[["Direction", "KFZ", "Bicycle"]]
 
 
 # ==================================================
@@ -338,11 +345,11 @@ if manual_mode:
 
     if simple_uploaded is not None:
         try:
-            vals = load_simple_manual_excel(simple_uploaded.read())
+            df_in = load_simple_manual_excel(simple_uploaded.getvalue())
 
             new_df = st.session_state["manual_df"].copy()
-            new_df["KFZ"] = [int(round(v)) for v in vals]
-            new_df["Bicycle"] = [0] * 12
+            new_df["KFZ"] = df_in["KFZ"].tolist()
+            new_df["Bicycle"] = df_in["Bicycle"].tolist()
             st.session_state["manual_df"] = new_df
 
             st.session_state["manual_generate_clicked"] = True
