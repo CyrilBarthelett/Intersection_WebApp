@@ -338,7 +338,7 @@ if manual_mode:
     
     st.markdown(T["Upload simple Excel or directly add inputs into the table"])
     simple_uploaded = st.file_uploader(
-        T["Excel with the desired flow inputs in the first 12 rows, first column"],
+        T["Excel with the desired flow inputs"],
         type=["xlsx"],
         key="simple_manual_excel",
     )
