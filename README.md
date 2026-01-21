@@ -1,6 +1,8 @@
 🛣️ Traffic Flow Plot Generator
 
-You can access the web app with this link: https://intersection-app.streamlit.app/
+You can access the web app with this link: https://intersection-app.streamlit.app/.
+
+Examples of the Excel format are available in this folder: [exemple_excel_formats](./exemple_excel_formats).
 
 This Streamlit-based web app was developped at komobile GmbH to turn traffic count data into Sankey-style intersection flow diagrams (PNG & SVG) for up to 4 different directions.
 
