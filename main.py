@@ -113,18 +113,21 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=6):
         clip_on=False
     )
 
-def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_WE,line_lw=3,line_color="black",text_color="black",text_fontsize=18,offset_line=0.9,offset_text=1.2,zorder=40):
+def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
+                                d_NS, d_WE,
+                                line_lw=3, line_color="black",
+                                text_color="black", text_fontsize=18,
+                                offset_line=0.9, offset_text=1.2,
+                                zorder=40):
     """
-    Draw a span line between the two most outward edges of a side considering BOTH dep+arr ports.
-    Outward edges are computed as coordinate +/- (W[pid]/2) along the variable axis.
+    Draw a span line across the outward edges of a side considering dep+arr ports.
 
-    If dep or arr group is missing, synthesize the missing group by shifting the existing group
-    by +/- 2*d along the variable axis (keeping same widths).
-
-    Text is horizontal for N/S and vertical (top->bottom) for E/W.
+    Works even if only dep OR only arr exists, and even if there is only ONE active port.
+    If one group is missing, synthesizes extents by shifting the existing group's ports by +/- 2*d
+    along the variable axis.
     """
 
-    # Determine variable axis + outward normal + dep<->arr shift
+    # Determine variable axis + outward normal + dep<->arr shift magnitude
     if side in ("N", "S"):
         var_axis = 0  # x varies
         other_axis = 1
@@ -139,18 +142,16 @@ def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_W
     dep_ids = list(dep_ids) if dep_ids else []
     arr_ids = list(arr_ids) if arr_ids else []
 
-    # Collect all real points (must have at least 2)
+    # Real points that exist in both P and W
     real_pids = [pid for pid in (dep_ids + arr_ids) if pid in P and pid in W]
-    if len(real_pids) < 2:
+    if len(real_pids) == 0:
         return
 
-    # We will build a list of "edge extents" along var_axis:
-    # each item is (min_edge, max_edge, other_coord)
     extents = []
 
     def add_pid_extent(pid, delta_var=0.0):
         pt = np.array(P[pid], float).copy()
-        pt[var_axis] += delta_var
+        pt[var_axis] += float(delta_var)
         half = float(W[pid]) / 2.0
         min_edge = float(pt[var_axis] - half)
         max_edge = float(pt[var_axis] + half)
@@ -160,7 +161,7 @@ def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_W
     for pid in real_pids:
         add_pid_extent(pid, delta_var=0.0)
 
-    # If one group missing, synthesize by shifting the existing group's points
+    # Synthesize missing group extents (optional but keeps your intended span behavior)
     if len(dep_ids) == 0 and len(arr_ids) > 0:
         for pid in arr_ids:
             if pid in P and pid in W:
@@ -171,14 +172,8 @@ def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_W
             if pid in P and pid in W:
                 add_pid_extent(pid, delta_var=+shift)
 
-    if len(extents) < 2:
-        return
-
-    # Global min/max edges across all extents
     min_edge = min(e[0] for e in extents)
     max_edge = max(e[1] for e in extents)
-
-    # Choose a stable coordinate on the other axis (average works well)
     other_mean = float(np.mean([e[2] for e in extents]))
 
     # Build line endpoints in data coords
@@ -193,21 +188,19 @@ def add_side_span_line_and_total(ax,P,W,dep_ids,arr_ids,side,total_text,d_NS,d_W
     p1_line = p1 + offset_line * nrm
     p2_line = p2 + offset_line * nrm
 
-    ax.plot(
-        [p1_line[0], p2_line[0]],
-        [p1_line[1], p2_line[1]],
-        linewidth=line_lw,
-        color=line_color,
-        solid_capstyle="round",
-        zorder=zorder,
-        clip_on=False,
-    )
-
-    # Text position: midpoint, pushed further outward
+    ax.plot([p1_line[0], p2_line[0]],
+            [p1_line[1], p2_line[1]],
+            linewidth=line_lw,
+            color=line_color,
+            solid_capstyle="round",
+            zorder=zorder,
+            clip_on=False)
+    
+        # Text position
     mid = 0.5 * (p1 + p2)
     pos_text = mid + offset_text * nrm
 
-    # Rotation: E/W should read North -> South (top -> bottom)
+    # Rotation: E/W read top->bottom
     rotation = 270 if side in ("E", "W") else 0
 
     ax.text(
@@ -730,36 +723,30 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         ids_dep = GROUP_ACTIVE[(side, "dep")]
         if len(ids_dep) >= 1:
             dep_label = str(int(round(dep_kfz_by_side.get(side, 0.0))))
-            add_group_arrow(
-                ax, P, W, ids_dep, side,
-                outward=False, color="k",
-                label=dep_label, label_color="white", label_fontsize=5
-            )
+            add_group_arrow(ax, P, W, ids_dep, side, outward=False, color="k",
+                            label=dep_label, label_color="white", label_fontsize=5)
 
         ids_arr = GROUP_ACTIVE[(side, "arr")]
         if len(ids_arr) >= 1:
             arr_label = str(int(round(arr_kfz_by_side.get(side, 0.0))))
-            add_group_arrow(
-                ax, P, W, ids_arr, side,
-                outward=True, color="k",
-                label=arr_label, label_color="white", label_fontsize=5
-            )
+            add_group_arrow(ax, P, W, ids_arr, side, outward=True, color="k",
+                            label=arr_label, label_color="white", label_fontsize=5)
+
+        if len(ids_dep) >= 1 or len(ids_arr) >= 1:
             total_val = int(round(total_kfz_by_side.get(side, 0.0)))
             add_side_span_line_and_total(
-                    ax,
-                    P,
-                    W,
-                    dep_ids=ids_dep,
-                    arr_ids=ids_arr,
-                    side=side,
-                    total_text=total_val,
-                    d_NS=d_NS,
-                    d_WE=d_WE,
-                    line_lw=3,
-                    text_fontsize=18,
-                    offset_line=0.9,
-                    offset_text=1.25,
-                )
+                ax, P, W,
+                dep_ids=ids_dep,
+                arr_ids=ids_arr,
+                side=side,
+                total_text=total_val,
+                d_NS=d_NS,
+                d_WE=d_WE,
+                line_lw=3,
+                text_fontsize=18,
+                offset_line=1.1,
+                offset_text=1.5,
+            )
 
     ax.set_aspect("equal", adjustable="box")
     pad = 1.4
