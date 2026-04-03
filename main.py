@@ -602,7 +602,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
                 clip_on=False
             )
 
-def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png"):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True,):
     """Create a PNG plot for given traffic and width data.
     kfz: numpy array of KFZ flow magnitudes aligned with flows_present
     bike: numpy array of bicycle flow magnitudes aligned with flows_present
@@ -711,7 +711,12 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
                 side = pid_to_side[start_pid]
                 kfz_val = flow_kfz[(i, j)]
                 bike_val = flow_bike[(i, j)]
-                txt = f"{int(round(kfz_val))} | {int(round(bike_val))}"
+
+                if show_bicycle_labels:
+                    txt = f"{int(round(kfz_val))} | {int(round(bike_val))}"
+                else:
+                    txt = f"{int(round(kfz_val))}"
+
                 add_flow_label_before_start(ax, Astart, side, txt, color=col, fontsize=6)
 
     # ---------- GROUP ARROWS ----------
@@ -767,7 +772,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     return buf.getvalue(), filename
 
 # --------------------- MAIN GENERATOR ---------------------
-def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, w_min: float = 0.1, w_max: float = 1.1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
+def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, str]] = None, d_NS: float = 1, d_WE: float = 1, w_min: float = 0.1, w_max: float = 1.1, mode: str = "KFZ", use_custom_window: bool = False, custom_start_time: Optional[str] = None, show_bicycle_labels: bool = True) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     wb = load_workbook(io.BytesIO(excel_bytes), data_only=True)
     ws_deckblatt = wb["Deckbl."]
     verkehrszählungsort = ws_deckblatt["C8"].value
@@ -1143,11 +1148,14 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     # Generate three plots
     pngs = []
     svgs = []
+    pdfs = []
     def _add_both(flow, bike, w, suffix, start, end):
         pngs.append(create_plot(flow, bike, w, flows_present, verkehrszählungsort,
-                                suffix, start, end, side_colors, d_NS, d_WE, fmt="png"))
+                                suffix, start, end, side_colors, d_NS, d_WE, fmt="png", show_bicycle_labels=show_bicycle_labels))
         svgs.append(create_plot(flow, bike, w, flows_present, verkehrszählungsort,
-                                suffix, start, end, side_colors, d_NS, d_WE, fmt="svg"))
+                                suffix, start, end, side_colors, d_NS, d_WE, fmt="svg", show_bicycle_labels=show_bicycle_labels))
+        pdfs.append(create_plot(flow, bike, w, flows_present, verkehrszählungsort,
+                                suffix, start, end, side_colors, d_NS, d_WE, fmt="pdf", show_bicycle_labels=show_bicycle_labels))
 
     _add_both(flow_general,   bike_general,   width_general_sel,   suffix_general,   day_start_time,       day_end_time)
     _add_both(flow_morning,   bike_morning,   width_morning_sel,   suffix_morning,   morning_time_start,   morning_time_end)
@@ -1232,7 +1240,7 @@ def generate_png_from_excel(excel_bytes: bytes, side_colors: Optional[Dict[str, 
     },
     }
     
-    return pngs, svgs, meta
+    return pngs, svgs, pdfs, meta
 
 def generate_plots_from_direction_values(
     direction_values: Dict[str, Dict[str, float]],  # e.g. {"R1":{"kfz":120,"rad":15}, ...}
@@ -1243,7 +1251,8 @@ def generate_plots_from_direction_values(
     w_min: float = 0.1,
     w_max: float = 1.1,
     mode: str = "KFZ",
-) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
+    show_bicycle_labels: bool = True,
+) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     
     # keep only R1..R12 that exist
     present_dirnums = sorted(int(k[1:]) for k in direction_values.keys() if k.startswith("R"))
@@ -1263,8 +1272,9 @@ def generate_plots_from_direction_values(
     widths = calculate_width(tmp_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=use_pkw)
 
     # you may not have morning/afternoon in manual mode; simplest: produce one "full_day" plot
-    pngs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="png")]
-    svgs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="svg")]
+    pngs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="png", show_bicycle_labels=show_bicycle_labels)]
+    svgs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="svg", show_bicycle_labels=show_bicycle_labels)]
+    pdfs = [create_plot(kfz, bike, widths, flows_present, location, "manual", "manual", "manual", side_colors, d_NS, d_WE, fmt="pdf", show_bicycle_labels=show_bicycle_labels)] 
 
     meta = {"location": location, "mode": mode, "per_direction": direction_values}
-    return pngs, svgs, meta
+    return pngs, svgs, pdfs, meta

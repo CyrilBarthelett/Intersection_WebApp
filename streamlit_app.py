@@ -73,7 +73,8 @@ TEXT = {
         "Wmax" : "Maximale Strombreite",
         "SV share" : "SV-Anteil",
         "Upload simple Excel or directly add inputs into the table": "Laden Sie eine einfache Excel-Datei hoch oder geben Sie die Daten direkt in die Tabelle ein",
-        "Excel with the desired flow inputs": "Excel mit den gewünschten Strominputs"
+        "Excel with the desired flow inputs": "Excel mit den gewünschten Strominputs",
+        "hide_bicycle_labels": "Fahrradwerte ausblenden"
     },
     "English": {
         "title": "Traffic Flow Plot Generator",
@@ -130,7 +131,8 @@ TEXT = {
         "Wmax" : "Maximum flow width",
         "SV share" : "SV share",
         "Upload simple Excel or directly add inputs into the table": "Upload simple Excel or directly add inputs into the table",
-        "Excel with the desired flow inputs": "Excel with the desired flow inputs"
+        "Excel with the desired flow inputs": "Excel with the desired flow inputs",
+        "hide_bicycle_labels": "Hide bicycle numbers"
     },
 }
 
@@ -192,18 +194,19 @@ def build_direction_values_from_df(df: pd.DataFrame) -> dict:
     return out
 
 
-def show_download_and_preview_block(png_list, svg_list, titles, time_windows, T):
+def show_download_and_preview_block(png_list, svg_list, pdf_list, titles, time_windows, T):
     """
     Display a repeated block:
       - title
       - download PNG button
       - download SVG button
+      - download PDF button
       - PNG preview
     """
-    for (png_bytes, png_name), (svg_bytes, svg_name), title, tw in zip(
-        png_list, svg_list, titles, time_windows
+    for (png_bytes, png_name), (svg_bytes, svg_name), (pdf_bytes, pdf_name), title, tw in zip(
+        png_list, svg_list, pdf_list, titles, time_windows
     ):
-        title_col, btn_png_col, btn_svg_col = st.columns([1, 0.2, 0.2], vertical_alignment="center")
+        title_col, btn_png_col, btn_svg_col, btn_pdf_col= st.columns([1, 0.2, 0.2, 0.2], vertical_alignment="center")
 
         with title_col:
             st.markdown(f"### {title} ({tw})")
@@ -227,6 +230,17 @@ def show_download_and_preview_block(png_list, svg_list, titles, time_windows, T)
                 key=f"dl_svg_{svg_name}",
                 use_container_width=True,
             )
+            
+        with btn_pdf_col:
+            st.download_button(
+                label=f"{T['download']} PDF",
+                data=pdf_bytes,
+                file_name=pdf_name,
+                mime="application/pdf",
+                key=f"dl_pdf_{pdf_name}",
+                use_container_width=True,
+            )
+
 
         st.image(png_bytes, use_container_width=True)
         st.divider()
@@ -278,6 +292,12 @@ mode = st.sidebar.radio(
     T["show_flows"],
     options=["KFZ", "PKW-E"],
     help=T["unit_explanation"],
+)
+
+st.sidebar.header("Labels")
+hide_bicycle_labels = st.sidebar.checkbox(
+    T["hide_bicycle_labels"],
+    value=False,
 )
 
 # Color pickers for flows
@@ -444,7 +464,7 @@ if (not manual_mode) and uploaded:
     try:
         with st.spinner(T["generating"]):
             excel_bytes = uploaded.read()
-            png_list, svg_list, meta = generate_png_from_excel(
+            png_list, svg_list, pdf_list, meta = generate_png_from_excel(
                 excel_bytes,
                 side_colors,
                 d_NS=d_NS_value,
@@ -454,6 +474,7 @@ if (not manual_mode) and uploaded:
                 mode=mode,
                 use_custom_window=use_custom and (custom_start_time is not None),
                 custom_start_time=custom_start_time,
+                show_bicycle_labels=not hide_bicycle_labels
             )
         st.success(T["done"])
     except Exception as e:
@@ -465,7 +486,7 @@ if manual_mode and st.session_state.get("manual_generate_clicked", False):
         with st.spinner(T["generating"]):
             direction_values = build_direction_values_from_df(st.session_state["manual_df"])
 
-            png_list, svg_list, meta = generate_plots_from_direction_values(
+            png_list, svg_list, pdf_list, meta = generate_plots_from_direction_values(
                 direction_values=direction_values,
                 location="Manual input",
                 side_colors=side_colors,
@@ -474,6 +495,7 @@ if manual_mode and st.session_state.get("manual_generate_clicked", False):
                 w_min = w_min_value,
                 w_max = w_max_value,
                 mode=mode,
+                show_bicycle_labels=not hide_bicycle_labels,
             )
         st.success(T["done"])
     except Exception as e:
@@ -493,8 +515,8 @@ if png_list is None or svg_list is None or meta is None:
 if manual_mode:
 
     # In manual mode you typically have a single plot (but we keep it generic)
-    for idx, ((png_bytes, png_name), (svg_bytes, svg_name)) in enumerate(zip(png_list, svg_list)):
-        c1, c2, c3 = st.columns([1, 0.2, 0.2], vertical_alignment="center")
+    for idx, ((png_bytes, png_name), (svg_bytes, svg_name), (pdf_bytes, pdf_name)) in enumerate(zip(png_list, svg_list, pdf_list)):
+        c1, c2, c3, c4 = st.columns([1, 0.2, 0.2, 0.2], vertical_alignment="center")
 
         with c1:
             st.markdown(f"### {T['Generated plot']}")
@@ -696,4 +718,4 @@ if has_custom:
     time_windows.append(f"{meta['custom']['start']} – {meta['custom']['end']}")
     plot_titles.append(T["Plot custom"])
 
-show_download_and_preview_block(png_list, svg_list, plot_titles, time_windows, T)
+show_download_and_preview_block(png_list, svg_list, pdf_list, plot_titles, time_windows, T)
