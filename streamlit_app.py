@@ -136,7 +136,7 @@ TEXT = {
 
 # --- Language selection (sidebar) ---
 st.sidebar.header("🌐 Language")
-lang = st.sidebar.radio("Choose language", ["English", "Deutsch"])
+lang = st.sidebar.radio("Choose", ["English", "Deutsch"])
 T = TEXT["Deutsch"] if lang == "Deutsch" else TEXT["English"]
 
 
