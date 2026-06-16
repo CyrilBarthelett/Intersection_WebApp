@@ -1,0 +1,2 @@
+Um die App im Brower zu öffnen: https://intersection-app.streamlit.app/
+Dokumentation: https://github.com/CyrilBarthelett/Intersection_WebApp
