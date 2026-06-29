@@ -7,8 +7,9 @@ from main import generate_png_from_excel, generate_plots_from_direction_values
 # Run with:
 #   python -m streamlit run streamlit_app.py
 
-
+#AB HIER CODE AUS "LOCAL" ERSETZEN
 # ==================================================
+
 # 1) Page config (MUST be first Streamlit call)
 # ==================================================
 st.set_page_config(page_title="Traffic Flow Plot", page_icon="🛣️", layout="wide")
@@ -296,7 +297,7 @@ mode = st.sidebar.radio(
 st.sidebar.header("Labels")
 hide_bicycle_labels = st.sidebar.checkbox(
     T["hide_bicycle_labels"],
-    value=False,
+    value=True,
 )
 
 # Color pickers for flows
@@ -314,7 +315,7 @@ d_WE_value = st.sidebar.slider(T["East-West"], 0.5, 3.0, 1.5, 0.05)
 
 # Flow width selection
 st.sidebar.header(T["Width"])
-w_min_value = st.sidebar.slider(T["Wmin"], 0.0, 2.0, 0.1, 0.1)
+w_min_value = st.sidebar.slider(T["Wmin"], 0.0, 2.0, 0.2, 0.1)
 w_max_value = st.sidebar.slider(T["Wmax"], 0.0, 2.0, 1.1, 0.1)
 
 # Label font size selection
@@ -323,7 +324,7 @@ kfz_label_fontsize = st.sidebar.slider(
     "Schriftgröße KFZ/PKW-E Zahlen",
     6,
     30,
-    10,
+    12,
     1
 )
 
@@ -331,14 +332,14 @@ arrow_label_fontsize = st.sidebar.slider(
     "Schriftgröße Summen in schwarzen Pfeilen",
     6,
     30,
-    10,
+    12,
     1
 )
 side_total_fontsize = st.sidebar.slider(
     "Schriftgröße Gesamtsummen außen",
     6,
     36,
-    18,
+    16,
     1
 )
 # Street names for side totals
@@ -349,6 +350,40 @@ street_names = {
     "E": st.sidebar.text_input("Straße Osten", value=""),
     "S": st.sidebar.text_input("Straße Süden", value=""),
     "W": st.sidebar.text_input("Straße Westen", value=""),
+}
+
+# Rotation der Arme / Relationen
+st.sidebar.header("Arme drehen")
+
+side_rotations = {
+    "N": st.sidebar.slider(
+        "Zufahrt Nord drehen [Grad]",
+        min_value=-45,
+        max_value=45,
+        value=0,
+        step=5,
+    ),
+    "E": st.sidebar.slider(
+        "Zufahrt Ost drehen [Grad]",
+        min_value=-45,
+        max_value=45,
+        value=0,
+        step=5,
+    ),
+    "S": st.sidebar.slider(
+        "Zufahrt Süd drehen [Grad]",
+        min_value=-45,
+        max_value=45,
+        value=0,
+        step=5,
+    ),
+    "W": st.sidebar.slider(
+        "Zufahrt West drehen [Grad]",
+        min_value=-45,
+        max_value=45,
+        value=0,
+        step=5,
+    ),
 }
 # ==================================================
 # 6) Time window controls (Excel mode only)
@@ -511,6 +546,7 @@ if (not manual_mode) and uploaded:
                 arrow_label_fontsize=arrow_label_fontsize,
                 side_total_fontsize=side_total_fontsize,
                 street_names=street_names,
+                side_rotations=side_rotations,
 )
         st.success(T["done"])
     except Exception as e:
@@ -536,6 +572,7 @@ if manual_mode and st.session_state.get("manual_generate_clicked", False):
                 arrow_label_fontsize=arrow_label_fontsize,
                 side_total_fontsize=side_total_fontsize,
                 street_names=street_names,
+                side_rotations=side_rotations,
             )
         st.success(T["done"])
     except Exception as e:

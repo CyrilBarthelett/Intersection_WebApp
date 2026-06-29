@@ -17,7 +17,7 @@ from matplotlib.patches import Polygon
 from openpyxl import load_workbook
 from datetime import datetime, timedelta
 
-#Test command for github demo
+#AB HIER CODE AUS "LOCAL" ERSETZEN
 # --------------------- CONFIG ---------------------
 
 #PKW_Einheiten faktors
@@ -74,39 +74,124 @@ GROUP_SLOTS = {
 # Dict side → Matplotlib color name.
 SIDE_COLOR = {"N": "tab:blue", "E": "tab:orange", "S": "tab:green", "W": "tab:red"}
 
-def add_flow_label_before_start(ax, A, side, text, color, fontsize=1):
-    """Adds a the traffic near the start of the corresponding flow, before the flow begins"""
-    A = np.asarray(A, float)        #Ensures A is a numpy float array.
+def rotate_vec(vec, angle_deg):
+    """
+    Rotiert einen 2D-Vektor.
+    Positiver Winkel = gegen den Uhrzeigersinn.
+    Negativer Winkel = im Uhrzeigersinn.
+    """
+    angle_rad = np.deg2rad(angle_deg)
+    rot = np.array([
+        [np.cos(angle_rad), -np.sin(angle_rad)],
+        [np.sin(angle_rad),  np.cos(angle_rad)]
+    ])
+    return rot @ np.asarray(vec, float)
 
-    back = 0.15                     #How far outside the port the label sits
+def fmt_int_dot(value):
+    """
+    Formatiert ganze Zahlen mit Punkt als Tausendertrennzeichen.
+    Beispiel: 1000 -> 1.000
+    """
+    return f"{int(round(float(value))):,}".replace(",", ".")
 
-    #Locate start position and orientation based on side
-    if side == "E":
-        u_pos = np.array([1.0, 0.0])    
-        angle_deg = 0
-        ha, va = "left", "center"
-    elif side == "W":
-        u_pos = np.array([-1.0, 0.0])    
-        angle_deg = 0
-        ha, va = "right", "center"
-    elif side == "N":
-        u_pos = np.array([0.0, 1.0])     
-        angle_deg = -90                  
-        ha, va = "right", "center"
-    else:  # "S"
-        u_pos = np.array([0.0, -1.0])    
-        angle_deg = -90
-        ha, va = "left", "center"
+def get_side_rotation(side, side_rotations=None):
+    if side_rotations is None:
+        return 0.0
+    return float(side_rotations.get(side, 0.0))
 
-    #Final label position
-    pos = A + back * u_pos
+
+def get_side_normal(side, side_rotations=None):
+    """
+    Gibt die Außennormale einer Seite zurück.
+    Diese wird mit dem jeweiligen Seitenwinkel mitgedreht.
+    """
+    base = {
+        "N": np.array([0.0, +1.0]),
+        "E": np.array([+1.0, 0.0]),
+        "S": np.array([0.0, -1.0]),
+        "W": np.array([-1.0, 0.0]),
+    }[side]
+
+    return rotate_vec(base, get_side_rotation(side, side_rotations))
+
+
+def get_side_tangent(side, side_rotations=None):
+    """
+    Tangente zum Querschnittsstrich.
+    Steht immer normal auf die Außennormale.
+    """
+    nrm = get_side_normal(side, side_rotations)
+    return np.array([-nrm[1], nrm[0]])
+
+
+def get_text_rotation(side, side_rotations=None):
+    """
+    Textrotation parallel zum Trennstrich.
+
+    Der Trennstrich liegt quer zur Zufahrtsachse.
+    Daher gilt:
+    - Nord/Süd: Grundstellung waagrecht
+    - Ost/West: Grundstellung senkrecht
+    Danach wird mit dem Armwinkel mitgedreht.
+    """
+    if side in ("N", "S"):
+        base_angle = 0
+    else:
+        base_angle = 270
+
+    return base_angle + get_side_rotation(side, side_rotations)
+    
+def get_flow_label_rotation(side, side_rotations=None):
+    """
+    Rotation für die farbigen Einzelwerte KFZ/Rad.
+
+    Ziel:
+    - Ost/West: horizontal und normal lesbar
+    - Nord/Süd: vertikal, von links lesbar
+    - zusätzlich mit dem jeweiligen Arm mitgedreht
+    """
+    if side in ("N", "S"):
+        base_angle = -90
+    else:
+        base_angle = 0
+
+    return base_angle + get_side_rotation(side, side_rotations)
+
+def rotate_side_points(P, side, angle_deg):
+    """
+    Dreht alle Punkte einer Seite um den Knotenmittelpunkt C.
+    """
+    if angle_deg == 0:
+        return
+
+    ids = GROUP_SLOTS[(side, "dep")] + GROUP_SLOTS[(side, "arr")]
+
+    for pid in ids:
+        if pid in P:
+            P[pid] = C + rotate_vec(P[pid] - C, angle_deg)
+
+def add_flow_label_before_start(ax, A, side, text, color, fontsize=1, side_rotations=None):
+    """
+    Schreibt die Zahlen an den Flussanfang.
+    Die Beschriftung wird mit dem jeweiligen Arm mitgedreht.
+    """
+    A = np.asarray(A, float)
+
+    back = 0.85
+    nrm = get_side_normal(side, side_rotations)
+    pos = A + back * nrm
+
+    angle_deg = get_flow_label_rotation(side, side_rotations)
 
     ax.text(
-        pos[0], pos[1], text,
+        pos[0],
+        pos[1],
+        text,
         rotation=angle_deg,
         rotation_mode="anchor",
-        ha=ha, va=va,
-        fontsize=fontsize, # type: ignore
+        ha="center",
+        va="center",
+        fontsize=fontsize,
         color=color,
         zorder=50,
         fontweight="bold",
@@ -121,28 +206,17 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
                                 zorder=40,
                                 street_name: str = "",
                                 street_fontsize: Optional[int] = None,
-                                street_gap: float = 0.3,
-                                total_gap: float = 0.3):
+                                street_gap: float = 0.45,
+                                total_gap: float = 0.45,
+                                side_rotations=None):
     """
-    Draw a span line across the outward edges of a side.
+    Zeichnet den Querschnittsstrich inkl. Straßenname und Summe.
 
-    Gewünschte Reihenfolge:
-    - außen: Straßenname
-    - Mitte: Strich
-    - innen: Summe
+    Reihenfolge:
+    außen: Straßenname
+    Mitte: Strich
+    innen: Summe
     """
-
-    # Determine variable axis + outward normal
-    if side in ("N", "S"):
-        var_axis = 0
-        other_axis = 1
-        nrm = np.array([0.0, +1.0]) if side == "N" else np.array([0.0, -1.0])
-        shift = 2.0 * float(d_NS)
-    else:
-        var_axis = 1
-        other_axis = 0
-        nrm = np.array([+1.0, 0.0]) if side == "E" else np.array([-1.0, 0.0])
-        shift = 2.0 * float(d_WE)
 
     dep_ids = list(dep_ids) if dep_ids else []
     arr_ids = list(arr_ids) if arr_ids else []
@@ -151,45 +225,30 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
     if len(real_pids) == 0:
         return
 
-    extents = []
+    nrm = get_side_normal(side, side_rotations)
+    tan = get_side_tangent(side, side_rotations)
 
-    def add_pid_extent(pid, delta_var=0.0):
-        pt = np.array(P[pid], float).copy()
-        pt[var_axis] += float(delta_var)
-        half = float(W[pid]) / 2.0
-        min_edge = float(pt[var_axis] - half)
-        max_edge = float(pt[var_axis] + half)
-        extents.append((min_edge, max_edge, float(pt[other_axis])))
+    extents = []
+    normal_values = []
 
     for pid in real_pids:
-        add_pid_extent(pid, delta_var=0.0)
+        pt = np.array(P[pid], float)
+        s = float(np.dot(pt, tan))
+        o = float(np.dot(pt, nrm))
+        half = float(W[pid]) / 2.0
 
-    if len(dep_ids) == 0 and len(arr_ids) > 0:
-        for pid in arr_ids:
-            if pid in P and pid in W:
-                delta_var = -shift if side in ("N", "E") else shift
-                add_pid_extent(pid, delta_var=delta_var)
+        extents.append((s - half, s + half))
+        normal_values.append(o)
 
-    if len(arr_ids) == 0 and len(dep_ids) > 0:
-        for pid in dep_ids:
-            if pid in P and pid in W:
-                delta_var = shift if side in ("N", "E") else -shift
-                add_pid_extent(pid, delta_var=delta_var)
+    min_s = min(e[0] for e in extents)
+    max_s = max(e[1] for e in extents)
+    mean_o = float(np.mean(normal_values))
 
-    min_edge = min(e[0] for e in extents)
-    max_edge = max(e[1] for e in extents)
-    other_mean = float(np.mean([e[2] for e in extents]))
+    # Strich etwas nach außen verschieben
+    line_o = mean_o + offset_line
 
-    p1 = np.array([0.0, 0.0])
-    p2 = np.array([0.0, 0.0])
-    p1[var_axis] = min_edge
-    p2[var_axis] = max_edge
-    p1[other_axis] = other_mean
-    p2[other_axis] = other_mean
-
-    # Strich nach außen verschieben
-    p1_line = p1 + offset_line * nrm
-    p2_line = p2 + offset_line * nrm
+    p1_line = min_s * tan + line_o * nrm
+    p2_line = max_s * tan + line_o * nrm
 
     ax.plot(
         [p1_line[0], p2_line[0]],
@@ -201,17 +260,15 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
         clip_on=False
     )
 
-    # Mittelpunkt des Strichs
     mid_line = 0.5 * (p1_line + p2_line)
 
-    # nrm zeigt immer nach außen.
+    # nrm zeigt immer nach außen:
     # außen = Straßenname
     # innen = Summe
     street_pos = mid_line + street_gap * nrm
     total_pos = mid_line - total_gap * nrm
 
-    # Rotation für Ost/West
-    rotation = 270 if side in ("E", "W") else 0
+    rotation = get_text_rotation(side, side_rotations)
 
     # Summe innen zeichnen
     ax.text(
@@ -227,7 +284,6 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
         rotation_mode="anchor",
         zorder=zorder + 2,
         clip_on=False,
-        bbox=dict(facecolor="white", edgecolor="none", pad=0.08),
     )
 
     # Straßenname außen zeichnen
@@ -245,7 +301,7 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
             va="center",
             fontsize=street_fontsize,
             color=text_color,
-            fontweight="bold",
+            fontweight="normal",
             rotation=rotation,
             rotation_mode="anchor",
             zorder=zorder + 3,
@@ -549,97 +605,72 @@ def align_rect_pairs_shift_groups(P: Dict[int, np.ndarray], pairs: List[Tuple[in
         P[a] = Pa
         P[b] = Pb
 
-def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=10,
+def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zorder=10,
                     label: Optional[str] = None, label_color: str = "white",
-                    label_fontsize: int = 12):
-    """Add an arrow for a group of slots (supports 1+ ports), optionally with a text label inside."""
+                    label_fontsize: int = 12, side_rotations=None):
+    """
+    Add an arrow for a group of slots.
+    Der Pfeil wird mit dem jeweiligen Arm mitgedreht.
+    """
     ids = list(group_ids)
     if not ids:
         return
 
-    # side geometry
-    if side in ("N", "S"):
-        var_axis = 0  # x
-        nrm = np.array([0.0, +1.0]) if side == "N" else np.array([0.0, -1.0])
+    nrm = get_side_normal(side, side_rotations)
+    tan = get_side_tangent(side, side_rotations)
+
+    s_values = [float(np.dot(P[i], tan)) for i in ids]
+
+    min_idx = int(np.argmin(s_values))
+    max_idx = int(np.argmax(s_values))
+
+    pid_min = ids[min_idx]
+    pid_max = ids[max_idx]
+
+    P_min = np.array(P[pid_min], float)
+    P_max = np.array(P[pid_max], float)
+
+    base_min = P_min - tan * (float(W[pid_min]) / 2.0)
+    base_max = P_max + tan * (float(W[pid_max]) / 2.0)
+
+    base_center = 0.5 * (base_min + base_max)
+
+    if outward:
+        tip = base_center + nrm * 0.5
     else:
-        var_axis = 1  # y
-        nrm = np.array([+1.0, 0.0]) if side == "E" else np.array([-1.0, 0.0])
+        tip = base_center - nrm * 0.5
 
-    # ---------- build triangle ----------
-    if len(ids) == 1:
-        pid = ids[0]
-        P0 = np.array(P[pid], float)
+    tri = np.vstack([tip, base_min, base_max])
 
-        s = np.sign(P0[var_axis]) or 1.0
-        half = float(W[pid]) / 2.0
+    ax.add_patch(
+        Polygon(
+            tri,
+            closed=True,
+            facecolor=color,
+            edgecolor="none",
+            zorder=zorder
+        )
+    )
 
-        base_a = P0.copy(); base_a[var_axis] += half * s
-        base_b = P0.copy(); base_b[var_axis] -= half * s
-
-        base_center = 0.5 * (base_a + base_b)
-        tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
-
-        tri = np.vstack([tip, base_a, base_b])
-
-    else:
-        pts = np.array([P[i] for i in ids], float)
-        var = pts[:, var_axis]
-
-        far_idx = int(np.argmax(np.abs(var)))
-        clo_idx = int(np.argmin(np.abs(var)))
-
-        pid_far = ids[far_idx]
-        pid_clo = ids[clo_idx]
-
-        P_far = np.array(P[pid_far], float)
-        P_clo = np.array(P[pid_clo], float)
-
-        s_far = np.sign(P_far[var_axis]) or 1.0
-        d_far = (float(W[pid_far]) / 2.0) * s_far
-        d_clo = -(float(W[pid_clo]) / 2.0) * s_far
-
-        base_far = P_far.copy(); base_far[var_axis] += d_far
-        base_clo = P_clo.copy(); base_clo[var_axis] += d_clo
-
-        base_center = 0.5 * (base_far + base_clo)
-        tip = base_center + (nrm * 0.5 if outward else -nrm * 0.5)
-
-        tri = np.vstack([tip, base_far, base_clo])
-
-    # ---------- draw ----------
-    ax.add_patch(Polygon(tri, closed=True, facecolor=color, edgecolor="none", zorder=zorder))
-
-    # ---------- label ----------
     if label is not None:
         label_text = str(label)
 
         base_center = 0.5 * (tri[1] + tri[2])
         tip = tri[0]
 
-        # Position abhängig von der Pfeilrichtung:
-        # outward=True  -> Pfeil zeigt nach außen -> Text näher zur Basis
-        # outward=False -> Pfeil zeigt nach innen -> Text näher zur Spitze
         if outward:
-            label_pos = 0.75 * base_center + 0.25 * tip
+            label_pos = 1 * base_center + 0 * tip
         else:
-            label_pos = 0.35 * base_center + 0.65 * tip
+            label_pos = 0.20 * base_center + 0.80 * tip
 
-        # verfügbare Breite an der Pfeilbasis
-        base_width = float(np.linalg.norm(tri[1] - tri[2]))
-
-        # automatische Sicherheitsverkleinerung bei langen Zahlen / schmalen Pfeilen
+        # Einheitliche Schriftgröße für alle Zahlen in schwarzen Pfeilen
         fs = label_fontsize
-        if len(label_text) >= 4:
-            fs -= 1
-        if len(label_text) >= 5:
-            fs -= 1
-        if base_width < 0.7:
-            fs -= 2
-        if base_width < 0.45:
-            fs -= 2
 
-        fs = max(6, fs)
-
+        if side in ("N", "S"):
+            label_rotation = -90 + get_side_rotation(side, side_rotations)
+        else:
+            label_rotation = 0 + get_side_rotation(side, side_rotations)
+        
         ax.text(
             label_pos[0],
             label_pos[1],
@@ -648,12 +679,14 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="k", zorder=1
             va="center",
             fontsize=fs,
             color=label_color,
+            rotation=label_rotation,
+            rotation_mode="anchor",
             zorder=zorder + 1,
             fontweight="bold",
             clip_on=True,
         )
 
-def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True, kfz_label_fontsize: int = 12, arrow_label_fontsize: int = 12, side_total_fontsize: int = 18, street_names: Optional[Dict[str, str]] = None,):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True, kfz_label_fontsize: int = 12, arrow_label_fontsize: int = 12, side_total_fontsize: int = 18, street_names: Optional[Dict[str, str]] = None, side_rotations: Optional[Dict[str, float]] = None):
     """Create a PNG plot for given traffic and width data.
     kfz: numpy array of KFZ flow magnitudes aligned with flows_present
     bike: numpy array of bicycle flow magnitudes aligned with flows_present
@@ -728,7 +761,12 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         P,
         pairs=[(2, 17), (5, 14), (8, 23), (11, 20)]
     )
-    
+    # --- ROTATE SIDE ARMS ---
+    if side_rotations is None:
+        side_rotations = {"N": 0, "E": 0, "S": 0, "W": 0}
+
+    for side, angle_deg in side_rotations.items():
+        rotate_side_points(P, side, angle_deg)
     
     # Plot
     fig, ax = plt.subplots(figsize=(10, 10))  #fig is the whole image canvas, ax is the coordinate system where shapes are drawn
@@ -764,11 +802,19 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
                 bike_val = flow_bike[(i, j)]
 
                 if show_bicycle_labels:
-                    txt = f"{int(round(kfz_val))} | {int(round(bike_val))}"
+                    txt = f"{fmt_int_dot(kfz_val)} | {fmt_int_dot(bike_val)}"
                 else:
-                    txt = f"{int(round(kfz_val))}"
+                    txt = f"{fmt_int_dot(kfz_val)}"
 
-                add_flow_label_before_start(ax, Astart, side, txt, color=col, fontsize=kfz_label_fontsize)
+                add_flow_label_before_start(
+                    ax,
+                    Astart,
+                    side,
+                    txt,
+                    color=col,
+                    fontsize=kfz_label_fontsize,
+                    side_rotations=side_rotations
+                )
 
     # ---------- GROUP ARROWS ----------
     side_sums = compute_side_sums(flows_present, kfz)
@@ -778,18 +824,32 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
         if len(ids_dep) >= 1:
-            dep_label = str(int(round(dep_kfz_by_side.get(side, 0.0))))
-            add_group_arrow(ax, P, W, ids_dep, side, outward=False, color="k",
-                            label=dep_label, label_color="white", label_fontsize=arrow_label_fontsize)
+            dep_label = fmt_int_dot(dep_kfz_by_side.get(side, 0.0))
+            add_group_arrow(
+                ax, P, W, ids_dep, side,
+                outward=False,
+                color="#444444",
+                label=dep_label,
+                label_color="white",
+                label_fontsize=arrow_label_fontsize,
+                side_rotations=side_rotations
+            )
 
         ids_arr = GROUP_ACTIVE[(side, "arr")]
         if len(ids_arr) >= 1:
-            arr_label = str(int(round(arr_kfz_by_side.get(side, 0.0))))
-            add_group_arrow(ax, P, W, ids_arr, side, outward=True, color="k",
-                            label=arr_label, label_color="white", label_fontsize=arrow_label_fontsize)
+            arr_label = fmt_int_dot(arr_kfz_by_side.get(side, 0.0))
+            add_group_arrow(
+                ax, P, W, ids_arr, side,
+                outward=True,
+                color="#444444",
+                label=arr_label,
+                label_color="white",
+                label_fontsize=arrow_label_fontsize,
+                side_rotations=side_rotations
+            )
 
         if len(ids_dep) >= 1 or len(ids_arr) >= 1:
-            total_val = int(round(total_kfz_by_side.get(side, 0.0)))
+            total_val = fmt_int_dot(total_kfz_by_side.get(side, 0.0))
             add_side_span_line_and_total(
                 ax, P, W,
                 dep_ids=ids_dep,
@@ -800,9 +860,10 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
                 d_WE=d_WE,
                 line_lw=3,
                 text_fontsize=side_total_fontsize,
-                offset_line=1.1,
+                offset_line=1.75,
                 offset_text=1.5,
                 street_name=(street_names or {}).get(side, ""),
+                side_rotations=side_rotations,
             )
 
     ax.set_aspect("equal", adjustable="box")
@@ -839,6 +900,7 @@ def generate_png_from_excel(
     arrow_label_fontsize: int = 12,
     side_total_fontsize: int = 18,
     street_names: Optional[Dict[str, str]] = None,
+    side_rotations: Optional[Dict[str, float]] = None,
 ) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
 
     verkehrszählungsort = "Unbekannter Ort"
@@ -1226,17 +1288,17 @@ def generate_png_from_excel(
         pngs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="png", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names,
+            fmt="png", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names, side_rotations=side_rotations,
         ))
         svgs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="svg", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names,
+            fmt="svg", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names, side_rotations=side_rotations,
         ))
         pdfs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="pdf", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize, side_total_fontsize=side_total_fontsize, street_names=street_names
+            fmt="pdf", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize, side_total_fontsize=side_total_fontsize, street_names=street_names, side_rotations=side_rotations,
         ))
 
     _add_both(flow_general,   bike_general,   width_general_sel,   suffix_general,   day_start_time,       day_end_time)
@@ -1338,6 +1400,7 @@ def generate_plots_from_direction_values(
     arrow_label_fontsize: int = 12,
     side_total_fontsize: int = 18,
     street_names: Optional[Dict[str, str]] = None,
+    side_rotations: Optional[Dict[str, float]] = None,
 ) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     
     # keep only R1..R12 that exist
@@ -1361,17 +1424,37 @@ def generate_plots_from_direction_values(
     pngs = [create_plot(
         kfz, bike, widths, flows_present, location,
         "manual", "manual", "manual", side_colors, d_NS, d_WE,
-        fmt="png", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize
+        fmt="png",
+        show_bicycle_labels=show_bicycle_labels,
+        kfz_label_fontsize=kfz_label_fontsize,
+        arrow_label_fontsize=arrow_label_fontsize,
+        side_total_fontsize=side_total_fontsize,
+        street_names=street_names,
+        side_rotations=side_rotations,
     )]
+
     svgs = [create_plot(
         kfz, bike, widths, flows_present, location,
         "manual", "manual", "manual", side_colors, d_NS, d_WE,
-        fmt="svg", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize
+        fmt="svg",
+        show_bicycle_labels=show_bicycle_labels,
+        kfz_label_fontsize=kfz_label_fontsize,
+        arrow_label_fontsize=arrow_label_fontsize,
+        side_total_fontsize=side_total_fontsize,
+        street_names=street_names,
+        side_rotations=side_rotations,
     )]
+
     pdfs = [create_plot(
         kfz, bike, widths, flows_present, location,
         "manual", "manual", "manual", side_colors, d_NS, d_WE,
-        fmt="pdf", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize
+        fmt="pdf",
+        show_bicycle_labels=show_bicycle_labels,
+        kfz_label_fontsize=kfz_label_fontsize,
+        arrow_label_fontsize=arrow_label_fontsize,
+        side_total_fontsize=side_total_fontsize,
+        street_names=street_names,
+        side_rotations=side_rotations,
     )]
 
     meta = {"location": location, "mode": mode, "per_direction": direction_values}
