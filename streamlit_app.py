@@ -206,7 +206,7 @@ def show_download_and_preview_block(png_list, svg_list, pdf_list, titles, time_w
     for (png_bytes, png_name), (svg_bytes, svg_name), (pdf_bytes, pdf_name), title, tw in zip(
         png_list, svg_list, pdf_list, titles, time_windows
     ):
-        title_col, btn_png_col, btn_svg_col, btn_pdf_col= st.columns([1, 0.2, 0.2, 0.2], vertical_alignment="center")
+        title_col, btn_png_col, btn_svg_col, btn_pdf_col = st.columns([1, 0.2, 0.2, 0.2], vertical_alignment="center")
 
         with title_col:
             st.markdown(f"### {title} ({tw})")
@@ -240,7 +240,6 @@ def show_download_and_preview_block(png_list, svg_list, pdf_list, titles, time_w
                 key=f"dl_pdf_{pdf_name}",
                 use_container_width=True,
             )
-
 
         st.image(png_bytes, use_container_width=True)
         st.divider()
@@ -318,6 +317,39 @@ st.sidebar.header(T["Width"])
 w_min_value = st.sidebar.slider(T["Wmin"], 0.0, 2.0, 0.1, 0.1)
 w_max_value = st.sidebar.slider(T["Wmax"], 0.0, 2.0, 1.1, 0.1)
 
+# Label font size selection
+st.sidebar.header("Schriftgröße")
+kfz_label_fontsize = st.sidebar.slider(
+    "Schriftgröße KFZ/PKW-E Zahlen",
+    6,
+    30,
+    10,
+    1
+)
+
+arrow_label_fontsize = st.sidebar.slider(
+    "Schriftgröße Summen in schwarzen Pfeilen",
+    6,
+    30,
+    10,
+    1
+)
+side_total_fontsize = st.sidebar.slider(
+    "Schriftgröße Gesamtsummen außen",
+    6,
+    36,
+    18,
+    1
+)
+# Street names for side totals
+st.sidebar.header("Straßennamen")
+
+street_names = {
+    "N": st.sidebar.text_input("Straße Norden", value=""),
+    "E": st.sidebar.text_input("Straße Osten", value=""),
+    "S": st.sidebar.text_input("Straße Süden", value=""),
+    "W": st.sidebar.text_input("Straße Westen", value=""),
+}
 # ==================================================
 # 6) Time window controls (Excel mode only)
 # ==================================================
@@ -469,13 +501,17 @@ if (not manual_mode) and uploaded:
                 side_colors,
                 d_NS=d_NS_value,
                 d_WE=d_WE_value,
-                w_min = w_min_value,
-                w_max = w_max_value,
+                w_min=w_min_value,
+                w_max=w_max_value,
                 mode=mode,
                 use_custom_window=use_custom and (custom_start_time is not None),
                 custom_start_time=custom_start_time,
-                show_bicycle_labels=not hide_bicycle_labels
-            )
+                show_bicycle_labels=not hide_bicycle_labels,
+                kfz_label_fontsize=kfz_label_fontsize,
+                arrow_label_fontsize=arrow_label_fontsize,
+                side_total_fontsize=side_total_fontsize,
+                street_names=street_names,
+)
         st.success(T["done"])
     except Exception as e:
         st.error(f"Error: {e}")
@@ -492,10 +528,14 @@ if manual_mode and st.session_state.get("manual_generate_clicked", False):
                 side_colors=side_colors,
                 d_NS=d_NS_value,
                 d_WE=d_WE_value,
-                w_min = w_min_value,
-                w_max = w_max_value,
+                w_min=w_min_value,
+                w_max=w_max_value,
                 mode=mode,
                 show_bicycle_labels=not hide_bicycle_labels,
+                kfz_label_fontsize=kfz_label_fontsize,
+                arrow_label_fontsize=arrow_label_fontsize,
+                side_total_fontsize=side_total_fontsize,
+                street_names=street_names,
             )
         st.success(T["done"])
     except Exception as e:
@@ -540,6 +580,16 @@ if manual_mode:
                 key=f"dl_svg_manual_{idx}",
                 use_container_width=True,
             )
+
+            with c4:
+                st.download_button(
+                    label=f"{T['download']} PDF",
+                    data=pdf_bytes,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    key=f"dl_pdf_manual_{idx}",
+                    use_container_width=True,
+                )
 
         st.image(png_bytes, use_container_width=True)
         st.divider()
