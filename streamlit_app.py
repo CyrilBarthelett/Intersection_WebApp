@@ -160,6 +160,8 @@ def time_list(start_hm: str, end_hm: str, step_min: int = 15) -> list[str]:
         t += timedelta(minutes=step_min)
     return out
 
+def fmt_int_de(x):
+    return f"{int(round(float(x))):,}".replace(",", ".")
 
 def init_manual_state():
     """
@@ -291,6 +293,7 @@ st.sidebar.header(T["units"])
 mode = st.sidebar.radio(
     T["show_flows"],
     options=["KFZ", "PKW-E"],
+    index=1,
     help=T["unit_explanation"],
 )
 
@@ -703,36 +706,56 @@ if has_custom:
     df_out[f"{T['Custom window']} ({mode} | {T['Bicycle']})"] = \
         df[f"custom_{flow_col}"].astype(str) + " | " + df["custom_bike"].astype(str)
 
-st.dataframe(df_out, use_container_width=True, hide_index=True)
+import pandas as pd
+
+def format_number_de(x):
+    if pd.isna(x):
+        return ""
+    try:
+        return f"{float(x):,.0f}".replace(",", ".")
+    except (ValueError, TypeError):
+        return x
+
+st.dataframe(
+    df.style.format(format_number_de)
+)
 
 # ---- Totals cards ----
 tot = meta["totals"]
 
 if not has_custom:
     t1, t2, t3 = st.columns(3)
+
     with t1:
         st.markdown(f"**{T['Total full day']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'full_day_{flow_col}']))} | {int(round(tot['full_day_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'full_day_{flow_col}'])} | {fmt_int_de(tot['full_day_bike'])}")
+
     with t2:
         st.markdown(f"**{T['Total morning peak']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'morning_peak_{flow_col}']))} | {int(round(tot['morning_peak_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'morning_peak_{flow_col}'])} | {fmt_int_de(tot['morning_peak_bike'])}")
+
     with t3:
         st.markdown(f"**{T['Total afternoon peak']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'afternoon_peak_{flow_col}']))} | {int(round(tot['afternoon_peak_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'afternoon_peak_{flow_col}'])} | {fmt_int_de(tot['afternoon_peak_bike'])}")
+
 else:
     t1, t2, t3, t4 = st.columns(4)
+
     with t1:
         st.markdown(f"**{T['Total full day']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'full_day_{flow_col}']))} | {int(round(tot['full_day_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'full_day_{flow_col}'])} | {fmt_int_de(tot['full_day_bike'])}")
+
     with t2:
         st.markdown(f"**{T['Total morning peak']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'morning_peak_{flow_col}']))} | {int(round(tot['morning_peak_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'morning_peak_{flow_col}'])} | {fmt_int_de(tot['morning_peak_bike'])}")
+
     with t3:
         st.markdown(f"**{T['Total afternoon peak']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'afternoon_peak_{flow_col}']))} | {int(round(tot['afternoon_peak_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'afternoon_peak_{flow_col}'])} | {fmt_int_de(tot['afternoon_peak_bike'])}")
+
     with t4:
         st.markdown(f"**{T['Selected window']} ({mode} | {T['Bicycle']})**")
-        st.write(f"{int(round(tot[f'custom_{flow_col}']))} | {int(round(tot['custom_bike']))}")
+        st.write(f"{fmt_int_de(tot[f'custom_{flow_col}'])} | {fmt_int_de(tot['custom_bike'])}")
 
 st.divider()
 
@@ -746,7 +769,19 @@ df_side = pd.DataFrame({
     f"{T['Arriving']} {mode}":  [int(round(bd["arr_kfz"][s])) for s in ["N", "E", "S", "W"]],
     f"{T['Total']} {mode}":     [int(round(bd["total_kfz"][s])) for s in ["N", "E", "S", "W"]],
 })
-st.dataframe(df_side, use_container_width=True, hide_index=True)
+import pandas as pd
+
+def format_number_de(x):
+    if pd.isna(x):
+        return ""
+    try:
+        return f"{float(x):,.0f}".replace(",", ".")
+    except (ValueError, TypeError):
+        return x
+
+st.dataframe(
+    df.style.format(format_number_de)
+)
 
 # ---- Totals & SV share table ----
 st.subheader(T["Totals & SV share"])
@@ -756,7 +791,8 @@ sv_block = meta["sv"][mode_key]
 
 def pct(x: float) -> str:
     return f"{x:.2f}%"
-
+def fmt_int_de(x):
+    return f"{int(round(float(x))):,}".replace(",", ".")
 rows = [
     {
         "Time window": T["Full day"],
@@ -785,7 +821,19 @@ if has_custom:
         "SV share (%)": pct(sv_block["custom"]["sv_share_pct"]),
     })
 
-st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+import pandas as pd
+
+def format_number_de(x):
+    if pd.isna(x):
+        return ""
+    try:
+        return f"{float(x):,.0f}".replace(",", ".")
+    except (ValueError, TypeError):
+        return x
+
+st.dataframe(
+    df.style.format(format_number_de)
+)
 
 st.divider()
 

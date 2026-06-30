@@ -50,6 +50,7 @@ C = np.array([0.0, 0.0])    # center
 R = 4.0                     # radius for placing points  
 d = 1                       # distance from center line to middle point of group
 inward = 0.9                # inward control for bezier curves (curvature strength)
+inward_straight = 0.35      # schwächere Krümmung für "geradeaus"-Relationen (RECT_FLOWS_U)
 
 FILL = "lightblue"
 EDGE = "none"
@@ -123,7 +124,6 @@ def get_side_tangent(side, side_rotations=None):
     nrm = get_side_normal(side, side_rotations)
     return np.array([-nrm[1], nrm[0]])
 
-
 def get_text_rotation(side, side_rotations=None):
     """
     Textrotation parallel zum Trennstrich.
@@ -177,7 +177,7 @@ def add_flow_label_before_start(ax, A, side, text, color, fontsize=1, side_rotat
     """
     A = np.asarray(A, float)
 
-    back = 0.85
+    back = 0.55 if "|" not in str(text) else 0.85
     nrm = get_side_normal(side, side_rotations)
     pos = A + back * nrm
 
@@ -605,6 +605,40 @@ def align_rect_pairs_shift_groups(P: Dict[int, np.ndarray], pairs: List[Tuple[in
         P[a] = Pa
         P[b] = Pb
 
+def add_label_background_rect(ax, outer_center, span_width, tan_vec, inward_vec, text,
+                                fontsize, color="#333333", zorder=9,
+                                depth_pad=1.6, min_depth=0.32, min_width=0.25, ):
+    """
+    Zeichnet ein graues Rechteck an der Basis des Pfeils.
+    - Breite (entlang tan_vec) = grafische Breite der Relation(en) an der Basis
+    - Tiefe (entlang inward_vec) = an die Textlänge angepasst, wächst nach INNEN
+      (Richtung Kreuzungsmitte), damit es nicht mit weiter außen liegenden
+      Beschriftungen (Einzelwerte, Straßennamen, Summen) kollidiert.
+    Gibt den Mittelpunkt des Rechtecks zurück (für die Textplatzierung).
+    """
+    outer_center = np.asarray(outer_center, float)
+    tan_vec = np.asarray(tan_vec, float)
+    inward_vec = np.asarray(inward_vec, float)
+
+    depth = max(len(str(text)), 1) * fontsize * 0.013 * depth_pad
+    depth = max(depth, min_depth)
+
+    half_w = max(span_width, min_width) / 2.0
+    inner_center = outer_center + depth * inward_vec
+    rect_center = outer_center + (depth / 2.0) * inward_vec
+
+    corners = np.vstack([
+        outer_center - half_w * tan_vec,
+        outer_center + half_w * tan_vec,
+        inner_center + half_w * tan_vec,
+        inner_center - half_w * tan_vec,
+    ])
+
+    ax.add_patch(
+        Polygon(corners, closed=True, facecolor=color, edgecolor="none", zorder=zorder)
+    )
+    return rect_center
+
 def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zorder=10,
                     label: Optional[str] = None, label_color: str = "white",
                     label_fontsize: int = 12, side_rotations=None):
@@ -655,22 +689,37 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
     if label is not None:
         label_text = str(label)
 
+        # Basis-Mittelpunkt und grafische Breite der Gruppe (= Pfeilbasis)
         base_center = 0.5 * (tri[1] + tri[2])
-        tip = tri[0]
+        span_width = float(np.linalg.norm(base_max - base_min))
 
-        if outward:
-            label_pos = 1 * base_center + 0 * tip
-        else:
-            label_pos = 0.20 * base_center + 0.80 * tip
+        # Beschriftung wächst immer Richtung Kreuzungsmitte (innen),
+        # unabhängig davon ob der Pfeil nach außen oder innen zeigt –
+        # so kollidiert sie nie mit den weiter außen liegenden
+        # Einzelwert-/Straßennamen-/Summen-Beschriftungen.
+        inward_vec = -nrm
 
-        # Einheitliche Schriftgröße für alle Zahlen in schwarzen Pfeilen
         fs = label_fontsize
 
         if side in ("N", "S"):
             label_rotation = -90 + get_side_rotation(side, side_rotations)
         else:
             label_rotation = 0 + get_side_rotation(side, side_rotations)
-        
+
+        # Graues Hintergrundfeld an der Basis zeichnen, exakt so breit
+        # wie die Relation(en), und Textmittelpunkt davon übernehmen
+        label_pos = add_label_background_rect(
+            ax,
+            outer_center=base_center,
+            span_width=span_width,
+            tan_vec=tan,
+            inward_vec=inward_vec,
+            text=label_text,
+            fontsize=fs,
+            color=color,
+            zorder=zorder + 1,
+        )
+
         ax.text(
             label_pos[0],
             label_pos[1],
@@ -681,32 +730,19 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
             color=label_color,
             rotation=label_rotation,
             rotation_mode="anchor",
-            zorder=zorder + 1,
+            zorder=zorder + 2,
             fontweight="bold",
             clip_on=True,
         )
 
 def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True, kfz_label_fontsize: int = 12, arrow_label_fontsize: int = 12, side_total_fontsize: int = 18, street_names: Optional[Dict[str, str]] = None, side_rotations: Optional[Dict[str, float]] = None):
-    """Create a PNG plot for given traffic and width data.
-    kfz: numpy array of KFZ flow magnitudes aligned with flows_present
-    bike: numpy array of bicycle flow magnitudes aligned with flows_present
-    width: numpy array of ribbon widths aligned with flows_present
-    flows_present: list of (i,j) present
-    present_dirs: list of sheet names ["R1","R2",...] (mostly informational)
-    verkehrszählungsort: location name from Excel
-    suffix: string for filename (full_day, morning_peak, ...)
-    side_colors: optional dict overriding SIDE_COLOR
-    """
+    """Create a PNG plot for given traffic and width data."""
     # Update SIDE_COLOR with user-provided side_colors
     if side_colors:
         SIDE_COLOR.update(side_colors)
 
     # Width mapping already done
     flow_width = {(i, j): w for (i, j), w in zip(flows_present, width)}
-    
-    #Example: flows_present = [(1,24),(2,17),(3,10),(6,7)]
-    #         width         = [0.65,    0.30,   0.15,  0.55]
-    #         flow_width = {(1,24): 0.65, (2,17): 0.30, (3,10): 0.15, (6,7) : 0.55}
 
     # Assigns a width to each port ID
     W = {}
@@ -714,7 +750,7 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         W[i], W[j] = w, w
     active_points = set(W.keys())
 
-    # Map each flow (i,j) -> traffic value (same ordering as flows_present), only for the text of the traffic
+    # Map each flow (i,j) -> traffic value (same ordering as flows_present)
     flow_kfz  = {(i, j): float(v) for (i, j), v in zip(flows_present, kfz)}
     flow_bike = {(i, j): float(v) for (i, j), v in zip(flows_present, bike)}
     show_departure_labels = True
@@ -726,16 +762,17 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     }
 
     # Colors
-    departing_points = set()  
-    pid_to_side = {}      
+    departing_points = set()
+    pid_to_side = {}
     point_to_color = {}
     for side in ("N", "E", "S", "W"):
         for p in GROUP_ACTIVE[(side, "dep")]:
-            departing_points.add(p)                 #Add departing point to set
-            pid_to_side[p] = side                   #Map port ID to side
-            point_to_color[p] = SIDE_COLOR[side]    #Map port ID to color
+            departing_points.add(p)
+            pid_to_side[p] = side
+            point_to_color[p] = SIDE_COLOR[side]
+            # Vollständige Port -> Seite Zuordnung (dep UND arr), für die Elbow-Berechnung
 
-    def flow_color(i, j, default="lightblue"):      #Determine flow color based on departing points
+    def flow_color(i, j, default="lightblue"):
         if i in departing_points:
             return point_to_color[i]
         if j in departing_points:
@@ -761,15 +798,16 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         P,
         pairs=[(2, 17), (5, 14), (8, 23), (11, 20)]
     )
+
     # --- ROTATE SIDE ARMS ---
     if side_rotations is None:
         side_rotations = {"N": 0, "E": 0, "S": 0, "W": 0}
 
     for side, angle_deg in side_rotations.items():
         rotate_side_points(P, side, angle_deg)
-    
+
     # Plot
-    fig, ax = plt.subplots(figsize=(10, 10))  #fig is the whole image canvas, ax is the coordinate system where shapes are drawn
+    fig, ax = plt.subplots(figsize=(10, 10))
 
     for (i, j) in flows_present:
         if i not in P or j not in P:
@@ -784,37 +822,6 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         else:
             Z = C + np.array([A[0], B[1]])
             add_bezier_ribbon(ax, A, B, Z, w, col)
-            
-        # ---------- LABEL BEFORE START ----------
-        if show_departure_labels:
-            start_pid = None
-
-            # only label flows that start at a departing point
-            if i in departing_points:
-                start_pid = i
-            elif j in departing_points:
-                start_pid = j
-
-            if start_pid is not None:
-                Astart = np.asarray(P[start_pid], float)
-                side = pid_to_side[start_pid]
-                kfz_val = flow_kfz[(i, j)]
-                bike_val = flow_bike[(i, j)]
-
-                if show_bicycle_labels:
-                    txt = f"{fmt_int_dot(kfz_val)} | {fmt_int_dot(bike_val)}"
-                else:
-                    txt = f"{fmt_int_dot(kfz_val)}"
-
-                add_flow_label_before_start(
-                    ax,
-                    Astart,
-                    side,
-                    txt,
-                    color=col,
-                    fontsize=kfz_label_fontsize,
-                    side_rotations=side_rotations
-                )
 
     # ---------- GROUP ARROWS ----------
     side_sums = compute_side_sums(flows_present, kfz)
@@ -872,13 +879,12 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     ax.set_ylim(-R - pad, R + pad)
     ax.set_axis_off()
 
-    # Return bytes (no filesystem)
-    buf = io.BytesIO()                  #raw bytes like a file (so you can read Excel and write PNGs without saving to disk)
-    if fmt in ("png", "jpg", "jpeg", "pdf"):  
+    buf = io.BytesIO()
+    if fmt in ("png", "jpg", "jpeg", "pdf"):
         fig.savefig(buf, format=fmt, transparent=True, bbox_inches="tight", dpi=300)
     else:
         fig.savefig(buf, format=fmt, transparent=True, bbox_inches="tight")
-    
+
     plt.close(fig)
     safe_name = re.sub(r"[^\w\-]+", "_", str(verkehrszählungsort))
     filename = f"VZ_{safe_name}_{suffix}_{start_time}_{end_time}.{fmt}"
