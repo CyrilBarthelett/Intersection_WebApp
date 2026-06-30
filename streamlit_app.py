@@ -293,7 +293,7 @@ st.sidebar.header(T["units"])
 mode = st.sidebar.radio(
     T["show_flows"],
     options=["KFZ", "PKW-E"],
-    index=1,
+    index=0,
     help=T["unit_explanation"],
 )
 
@@ -696,15 +696,15 @@ for c in cols_to_int:
 df_out = pd.DataFrame({
     T["Direction"]: df["direction"],
     f"{T['Full day']} ({mode} | {T['Bicycle']})":
-        df[f"full_day_{flow_col}"].astype(str) + " | " + df["full_day_bike"].astype(str),
+        df[f"full_day_{flow_col}"].apply(fmt_int_de) + " | " + df["full_day_bike"].apply(fmt_int_de),
     f"{T['Morning peak']} ({mode} | {T['Bicycle']})":
-        df[f"morning_peak_{flow_col}"].astype(str) + " | " + df["morning_peak_bike"].astype(str),
+        df[f"morning_peak_{flow_col}"].apply(fmt_int_de) + " | " + df["morning_peak_bike"].apply(fmt_int_de),
     f"{T['Afternoon peak']} ({mode} | {T['Bicycle']})":
-        df[f"afternoon_peak_{flow_col}"].astype(str) + " | " + df["afternoon_peak_bike"].astype(str),
+        df[f"afternoon_peak_{flow_col}"].apply(fmt_int_de) + " | " + df["afternoon_peak_bike"].apply(fmt_int_de),
 })
 if has_custom:
     df_out[f"{T['Custom window']} ({mode} | {T['Bicycle']})"] = \
-        df[f"custom_{flow_col}"].astype(str) + " | " + df["custom_bike"].astype(str)
+        df[f"custom_{flow_col}"].apply(fmt_int_de) + " | " + df["custom_bike"].apply(fmt_int_de)
 
 import pandas as pd
 
@@ -717,7 +717,8 @@ def format_number_de(x):
         return x
 
 st.dataframe(
-    df.style.format(format_number_de)
+    df_out,
+    use_container_width=True
 )
 
 # ---- Totals cards ----
@@ -780,7 +781,8 @@ def format_number_de(x):
         return x
 
 st.dataframe(
-    df.style.format(format_number_de)
+    df_side.style.format(format_number_de),
+    use_container_width=True
 )
 
 # ---- Totals & SV share table ----
@@ -831,8 +833,11 @@ def format_number_de(x):
     except (ValueError, TypeError):
         return x
 
+df_sv = pd.DataFrame(rows)
+
 st.dataframe(
-    df.style.format(format_number_de)
+    df_sv.style.format(format_number_de),
+    use_container_width=True
 )
 
 st.divider()

@@ -822,7 +822,35 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
         else:
             Z = C + np.array([A[0], B[1]])
             add_bezier_ribbon(ax, A, B, Z, w, col)
+        # ---------- LABEL BEFORE START ----------
+        if show_departure_labels:
+            start_pid = None
 
+            if i in departing_points:
+                start_pid = i
+            elif j in departing_points:
+                start_pid = j
+
+            if start_pid is not None:
+                Astart = np.asarray(P[start_pid], float)
+                side = pid_to_side[start_pid]
+                kfz_val = flow_kfz[(i, j)]
+                bike_val = flow_bike[(i, j)]
+
+                if show_bicycle_labels:
+                    txt = f"{fmt_int_dot(kfz_val)} | {fmt_int_dot(bike_val)}"
+                else:
+                    txt = f"{fmt_int_dot(kfz_val)}"
+
+                add_flow_label_before_start(
+                    ax,
+                    Astart,
+                    side,
+                    txt,
+                    color=col,
+                    fontsize=kfz_label_fontsize,
+                    side_rotations=side_rotations
+                )
     # ---------- GROUP ARROWS ----------
     side_sums = compute_side_sums(flows_present, kfz)
     dep_kfz_by_side = side_sums["dep_kfz"]
