@@ -355,39 +355,6 @@ street_names = {
     "W": st.sidebar.text_input("Straße Westen", value=""),
 }
 
-# Rotation der Arme / Relationen
-st.sidebar.header("Arme drehen")
-
-side_rotations = {
-    "N": st.sidebar.slider(
-        "Zufahrt Nord drehen [Grad]",
-        min_value=-45,
-        max_value=45,
-        value=0,
-        step=5,
-    ),
-    "E": st.sidebar.slider(
-        "Zufahrt Ost drehen [Grad]",
-        min_value=-45,
-        max_value=45,
-        value=0,
-        step=5,
-    ),
-    "S": st.sidebar.slider(
-        "Zufahrt Süd drehen [Grad]",
-        min_value=-45,
-        max_value=45,
-        value=0,
-        step=5,
-    ),
-    "W": st.sidebar.slider(
-        "Zufahrt West drehen [Grad]",
-        min_value=-45,
-        max_value=45,
-        value=0,
-        step=5,
-    ),
-}
 # ==================================================
 # 6) Time window controls (Excel mode only)
 # ==================================================
@@ -549,7 +516,6 @@ if (not manual_mode) and uploaded:
                 arrow_label_fontsize=arrow_label_fontsize,
                 side_total_fontsize=side_total_fontsize,
                 street_names=street_names,
-                side_rotations=side_rotations,
 )
         st.success(T["done"])
     except Exception as e:
@@ -574,8 +540,7 @@ if manual_mode and st.session_state.get("manual_generate_clicked", False):
                 kfz_label_fontsize=kfz_label_fontsize,
                 arrow_label_fontsize=arrow_label_fontsize,
                 side_total_fontsize=side_total_fontsize,
-                street_names=street_names,
-                side_rotations=side_rotations,
+                street_names=street_names
             )
         st.success(T["done"])
     except Exception as e:
