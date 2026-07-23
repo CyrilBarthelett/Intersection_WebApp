@@ -77,8 +77,8 @@ EDGE = "none"
 EDGE_LW = 0.0
 
 # Darstellung sehr kleiner bzw. leerer Relationen
-MIN_POSITIVE_FLOW_WIDTH = 0.08    # Mindestbreite bei mehr als 0 Fahrzeugen
-ZERO_FLOW_LAYOUT_WIDTH = 0.08    # Platz für eine Relation mit 0 Fahrzeugen
+MIN_POSITIVE_FLOW_WIDTH = 0.05    # Mindestbreite bei mehr als 0 Fahrzeugen
+ZERO_FLOW_LAYOUT_WIDTH = 0.05    # Platz für eine Relation mit 0 Fahrzeugen
 ZERO_FLOW_LINEWIDTH = 1.5   # Breite der gestrichelten Linie
 ZERO_FLOW_DASH_PATTERN = (0, (5, 4))
 
@@ -251,7 +251,11 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
     dep_ids = list(dep_ids) if dep_ids else []
     arr_ids = list(arr_ids) if arr_ids else []
 
-    real_pids = [pid for pid in (dep_ids + arr_ids) if pid in P and pid in W]
+    real_pids = [
+        pid
+        for pid in (dep_ids + arr_ids)
+        if pid in P and pid in W
+    ]
 
     if len(real_pids) == 0:
         return
@@ -408,38 +412,102 @@ def calculate_width(direction_dic, width_min, width_max, tmin, tmax, gamma=1.0, 
     widths = width_min + (norm ** gamma) * (width_max - width_min)      #Scale to [width_min, width_max] using gamma correction
     return np.round(widths, 2)      #Returns all widths 
 
+def numeric_block_sum(df, row_start, row_end, col_start, col_end):
+    """
+    Summiert einen DataFrame-Bereich robust.
+
+    Leere Zellen und nichtnumerische Texte werden als 0 behandelt.
+    row_end und col_end sind wie bei iloc exklusiv.
+    """
+    block = df.iloc[row_start:row_end, col_start:col_end]
+
+    numeric_block = block.apply(
+        lambda column: pd.to_numeric(column, errors="coerce")
+    ).fillna(0.0)
+
+    return float(numeric_block.to_numpy().sum())
+
 def build_direction_dic(sheets, peak_idx):
-    """Build direction dictionary for a given peak index from sheets starting with R."""
+    """Build direction dictionary for a given peak index."""
     dic = {}
-    for sheet_name, df in sheets.items():       #Iterate over all sheets
-        if sheet_name.startswith("R"):          #Only process sheets starting with "R"
-            kfz_sum = df.iloc[peak_idx:peak_idx+4, 2:9].sum().sum()     #Sum kfz values in the specified range (4 rows starting at peak_idx, columns 2 to 8)
-            total_sum = df.iloc[peak_idx:peak_idx+4, 1:9].sum().sum()   #Sum total values (kfz + rad) in the specified range (4 rows starting at peak_idx, columns 1 to 8)
-            SV_sum = df.iloc[peak_idx:peak_idx+4, 4:9].sum().sum()
-            dic[sheet_name] = {
-                "total": total_sum,
-                "kfz": kfz_sum,
-                "rad": total_sum - kfz_sum,
-                "Summe_SV": SV_sum
-            }
+
+    for sheet_name, df in sheets.items():
+        if not sheet_name.startswith("R"):
+            continue
+
+        kfz_sum = numeric_block_sum(
+            df,
+            peak_idx,
+            peak_idx + 4,
+            2,
+            9,
+        )
+
+        total_sum = numeric_block_sum(
+            df,
+            peak_idx,
+            peak_idx + 4,
+            1,
+            9,
+        )
+
+        SV_sum = numeric_block_sum(
+            df,
+            peak_idx,
+            peak_idx + 4,
+            4,
+            9,
+        )
+
+        dic[sheet_name] = {
+            "total": total_sum,
+            "kfz": kfz_sum,
+            "rad": total_sum - kfz_sum,
+            "Summe_SV": SV_sum,
+        }
+
     return dic
 
 def PKW_Einheiten_traffic_dic(sheets, peak_idx):
     dic = {}
+
     for sheet_name, df in sheets.items():
-        if sheet_name.startswith("R"):
-            rad = df.iloc[peak_idx:peak_idx+4, 1].sum() * faktor_rad
-            einsp = df.iloc[peak_idx:peak_idx+4, 2].sum()
-            PKW = df.iloc[peak_idx:peak_idx+4, 3].sum()
-            Linienbus = df.iloc[peak_idx:peak_idx+4, 4].sum() * faktor_Linienbus
-            Reisebus = df.iloc[peak_idx:peak_idx+4, 5].sum() * faktor_Linienbus
-            LKW = df.iloc[peak_idx:peak_idx+4, 6].sum() * faktor_Linienbus
-            LKW_Anh = df.iloc[peak_idx:peak_idx+4, 7].sum() * faktor_lkwAnh
-            sons = df.iloc[peak_idx:peak_idx+4, 8].sum() * faktor_sonst
-            dic[sheet_name] = {
-                "PKW_Total": round(rad + einsp + PKW + Linienbus + Reisebus + LKW + LKW_Anh + sons),
-                "Summe_SV": round(Linienbus + Reisebus + LKW + LKW_Anh + sons)
-            }
+        if not sheet_name.startswith("R"):
+            continue
+
+        block = df.iloc[peak_idx:peak_idx + 4, 1:9].apply(
+            lambda column: pd.to_numeric(column, errors="coerce")
+        ).fillna(0.0)
+
+        rad = block.iloc[:, 0].sum() * faktor_rad
+        einsp = block.iloc[:, 1].sum()
+        PKW = block.iloc[:, 2].sum()
+        Linienbus = block.iloc[:, 3].sum() * faktor_Linienbus
+        Reisebus = block.iloc[:, 4].sum() * faktor_Linienbus
+        LKW = block.iloc[:, 5].sum() * faktor_Linienbus
+        LKW_Anh = block.iloc[:, 6].sum() * faktor_lkwAnh
+        sons = block.iloc[:, 7].sum() * faktor_sonst
+
+        dic[sheet_name] = {
+            "PKW_Total": round(
+                rad
+                + einsp
+                + PKW
+                + Linienbus
+                + Reisebus
+                + LKW
+                + LKW_Anh
+                + sons
+            ),
+            "Summe_SV": round(
+                Linienbus
+                + Reisebus
+                + LKW
+                + LKW_Anh
+                + sons
+            ),
+        }
+
     return dic
 
 def _sv_stats(total: float, sv: float) -> Dict[str, float]:
@@ -1123,24 +1191,40 @@ def generate_png_from_excel(
     # Load sheets for peak calculation
     sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
     
-    first_R_df = None 
+    first_R_df = None
+    first_R_sheet_name = None
+
     for sheet_name, df in sheets.items():
-        if sheet_name.startswith("R"):
-                if first_R_df is None:
-                    first_R_df = df
-                    
-    summe_idx = None
+        if not sheet_name.startswith("R"):
+            continue
+
+        traffic_block = df.iloc[13:, 1:9].apply(
+            lambda column: pd.to_numeric(column, errors="coerce")
+        ).fillna(0.0)
+
+        if (traffic_block.abs() > 0).any().any():
+            first_R_df = df
+            first_R_sheet_name = sheet_name
+            break
+
     if first_R_df is None:
-            raise ValueError("No R sheets found – first_R_df was never assigned")
+        raise ValueError(
+            "In keinem R-Blatt wurden Verkehrswerte größer null gefunden."
+        )
+
+    summe_idx = None
+
     for i, val in enumerate(first_R_df.iloc[:, 0]):
         if isinstance(val, str) and "SUMME" in val.upper():
             summe_idx = i
             break
-    
+
     if summe_idx is None:
-        raise ValueError("SUMME row not found")
-    
-    summe_row_number = summe_idx+1
+        raise ValueError(
+            f"SUMME-Zeile im Referenzblatt {first_R_sheet_name} nicht gefunden."
+        )
+
+    summe_row_number = summe_idx + 1
 
     def _parse_interval(cell_value: Any) -> tuple[Optional[str], Optional[str]]:
         """
@@ -1242,7 +1326,13 @@ def generate_png_from_excel(
         
         for sheet_name, df in sheets.items():
             if sheet_name.startswith("R"):
-                kfz_sheet_block_sum = df.iloc[idx:idx+4, 2:9].sum().sum()
+                kfz_sheet_block_sum = numeric_block_sum(
+                    df,
+                    idx,
+                    idx + 4,
+                    2,
+                    9,
+                )
                 kfz_block_sum += kfz_sheet_block_sum
                 
         # read time from first_R_df (stable reference)
@@ -1267,27 +1357,27 @@ def generate_png_from_excel(
 
     first_idx = None
     last_idx = None
-    started = False
-    
-    if first_R_df is None:
-        raise ValueError("No R sheets found – first_R_df was never assigned")
 
     for row_idx in range(13, summe_idx):
-        current_value = first_R_df.iloc[row_idx, col]
+        row_values = pd.to_numeric(
+            first_R_df.iloc[row_idx, 1:9],
+            errors="coerce"
+        ).fillna(0.0)
 
-        if pd.notna(current_value) and not started:
-            first_idx = row_idx
+        if (row_values.abs() > 0).any():
+            if first_idx is None:
+                first_idx = row_idx
+
             last_idx = row_idx
-            started = True
-        elif pd.notna(current_value) and started:
-            last_idx = row_idx
-        elif pd.isna(current_value) and started:
-            break
-        
+
     if first_idx is None or last_idx is None:
-        raise ValueError("No non-NaN data found in the specified range (rows 14–81)")
-    day_start_time = str(first_R_df.iloc[first_idx, 0]).split("-")[0]
-    day_end_time   = str(first_R_df.iloc[last_idx, 0]).split("-")[-1]
+        raise ValueError(
+            f"Keine Verkehrsdaten im Referenzblatt {first_R_sheet_name} gefunden."
+        )
+
+    day_start_time = str(first_R_df.iloc[first_idx, 0]).split("-")[0].strip()
+    day_end_time = str(first_R_df.iloc[last_idx, 0]).split("-")[-1].strip()
+
     morning_time_start = str(morning_time_start).split("-")[0]
     morning_time_end   = str(morning_time_end).split("-")[-1]
 
@@ -1354,13 +1444,28 @@ def generate_png_from_excel(
     pkw_sv_morning = _sv_stats(PKW_Einheiten_morning_summe, PKW_Einheiten_SV_morning)
     pkw_sv_afternoon = _sv_stats(PKW_Einheiten_afternoon_summe, PKW_Einheiten_SV_afternoon)
 
-    # --- Ensure consistent ordering (important!) ---
-    present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys()) #Convert "R1" → 1, etc, and sorts
-    if not present_dirnums:
-        raise ValueError("No 'R*' sheets found. Nothing to plot.")
+    # --- Nur Relationen berücksichtigen, die über den gesamten Tag KFZ > 0 haben ---
+    #
+    # Dadurch gilt:
+    # - Tagessumme KFZ = 0:
+    #   Relation wird in keinem Diagramm dargestellt.
+    #
+    # - Tagessumme KFZ > 0, aber Spitzenstunde KFZ = 0:
+    #   Relation bleibt enthalten und wird in der Spitzenstunde
+    #   als gestrichelte Null-Relation mit dem Label "0" dargestellt.
+    present_dirnums = sorted(
+        int(name[1:])
+        for name, values in direction_dic.items()
+        if float(values["kfz"]) > 0
+    )
 
-    present_dirs = [f"R{k}" for k in present_dirnums]       #ordered list of sheet names
-    flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]       #ordered list of edges (i,j) matching those directions
+    if not present_dirnums:
+        raise ValueError(
+            "Keine Relation mit einer KFZ-Tagessumme größer 0 gefunden."
+        )
+
+    present_dirs = [f"R{k}" for k in present_dirnums]
+    flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]
 
     # Reorder dictionaries so their .values() match present_dirs order
     direction_dic = {k: direction_dic[k] for k in present_dirs}
@@ -1424,10 +1529,6 @@ def generate_png_from_excel(
         pkw_custom_sv  = sum(value["Summe_SV"] for value in PKW_Einheiten_traffic_custom.values())
         pkw_sv_custom = _sv_stats(pkw_custom_sum, pkw_custom_sv)   
 
-
-    present_dirnums = sorted(int(name[1:]) for name in direction_dic.keys())
-    if not present_dirnums:
-        raise ValueError("No 'R*' sheets found. Nothing to plot.")
 
     kfz_general = np.array([direction_dic[name]["kfz"] for name in present_dirs], dtype=float)
     kfz_morning = np.array([direction_morning_dic[name]["kfz"] for name in present_dirs], dtype=float)
