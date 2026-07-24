@@ -1467,31 +1467,140 @@ def generate_png_from_excel(
     present_dirs = [f"R{k}" for k in present_dirnums]
     flows_present = [DIR_TO_FLOW[k] for k in present_dirnums]
 
-    # Reorder dictionaries so their .values() match present_dirs order
-    direction_dic = {k: direction_dic[k] for k in present_dirs}
-    direction_morning_dic = {k: direction_morning_dic[k] for k in present_dirs}
-    direction_afternoon_dic = {k: direction_afternoon_dic[k] for k in present_dirs}
+    # Alle Dictionaries auf dieselben aktiven Relationen reduzieren
+    # und in identischer Reihenfolge anordnen.
+    direction_dic = {
+        k: direction_dic[k]
+        for k in present_dirs
+    }
 
-    # --- Global min/max across ALL three datasets ---
+    direction_morning_dic = {
+        k: direction_morning_dic[k]
+        for k in present_dirs
+    }
+
+    direction_afternoon_dic = {
+        k: direction_afternoon_dic[k]
+        for k in present_dirs
+    }
+
+    PKW_direction_general_dic = {
+        k: PKW_direction_general_dic[k]
+        for k in present_dirs
+    }
+
+    PKW_Einheiten_traffic_morning = {
+        k: PKW_Einheiten_traffic_morning[k]
+        for k in present_dirs
+    }
+
+    PKW_Einheiten_traffic_afternoon = {
+        k: PKW_Einheiten_traffic_afternoon[k]
+        for k in present_dirs
+    }
+
+    # --------------------------------------------------
+    # Globale Skalierung für KFZ
+    # --------------------------------------------------
     all_kfz = []
-    for dir_ in (direction_dic, direction_morning_dic, direction_afternoon_dic):
-        all_kfz.extend(v["kfz"] for v in dir_.values())
 
-    if direction_custom_dic is not None:
-        all_kfz.extend(v["kfz"] for v in direction_custom_dic.values())
+    for traffic_dic in (
+        direction_dic,
+        direction_morning_dic,
+        direction_afternoon_dic,
+    ):
+        all_kfz.extend(
+            float(values["kfz"])
+            for values in traffic_dic.values()
+        )
 
-    tmin = float(min(all_kfz))
-    tmax = float(max(all_kfz))
+    tmin_kfz = float(min(all_kfz))
+    tmax_kfz = float(max(all_kfz))
 
-    # --- Calculate widths on shared scale ---
-    gamma = 0.5  # <--- more resolution; set to 1.0 for strict linear
 
-    width_general = calculate_width(direction_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_morning_peak = calculate_width(direction_morning_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_afternoon_peak = calculate_width(direction_afternoon_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-    width_PKW_general = calculate_width(PKW_direction_general_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
-    width_PKW_morning = calculate_width(PKW_Einheiten_traffic_morning,w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
-    width_PKW_afternoon = calculate_width(PKW_Einheiten_traffic_afternoon, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
+    # --------------------------------------------------
+    # Globale Skalierung für PKW-E
+    # --------------------------------------------------
+    all_pkw = []
+
+    for traffic_dic in (
+        PKW_direction_general_dic,
+        PKW_Einheiten_traffic_morning,
+        PKW_Einheiten_traffic_afternoon,
+    ):
+        all_pkw.extend(
+            float(values["PKW_Total"])
+            for values in traffic_dic.values()
+        )
+
+    tmin_pkw = float(min(all_pkw))
+    tmax_pkw = float(max(all_pkw))
+
+
+    # --------------------------------------------------
+    # Breiten berechnen
+    # --------------------------------------------------
+    gamma = 0.5
+
+    width_general = calculate_width(
+        direction_dic,
+        w_min,
+        w_max,
+        tmin_kfz,
+        tmax_kfz,
+        gamma=gamma,
+        PKW_Einheiten=False,
+    )
+
+    width_morning_peak = calculate_width(
+        direction_morning_dic,
+        w_min,
+        w_max,
+        tmin_kfz,
+        tmax_kfz,
+        gamma=gamma,
+        PKW_Einheiten=False,
+    )
+
+    width_afternoon_peak = calculate_width(
+        direction_afternoon_dic,
+        w_min,
+        w_max,
+        tmin_kfz,
+        tmax_kfz,
+        gamma=gamma,
+        PKW_Einheiten=False,
+    )
+
+    width_PKW_general = calculate_width(
+        PKW_direction_general_dic,
+        w_min,
+        w_max,
+        tmin_pkw,
+        tmax_pkw,
+        gamma=gamma,
+        PKW_Einheiten=True,
+    )
+
+    width_PKW_morning = calculate_width(
+        PKW_Einheiten_traffic_morning,
+        w_min,
+        w_max,
+        tmin_pkw,
+        tmax_pkw,
+        gamma=gamma,
+        PKW_Einheiten=True,
+    )
+
+    width_PKW_afternoon = calculate_width(
+        PKW_Einheiten_traffic_afternoon,
+        w_min,
+        w_max,
+        tmin_pkw,
+        tmax_pkw,
+        gamma=gamma,
+        PKW_Einheiten=True,
+    )
     
     width_custom = None
     width_PKW_custom = None
@@ -1506,13 +1615,57 @@ def generate_png_from_excel(
     kfz_sv_custom = None
     pkw_sv_custom = None
 
-    if direction_custom_dic is not None and PKW_Einheiten_traffic_custom is not None:
-        width_custom = calculate_width(direction_custom_dic, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=False)
-        width_PKW_custom = calculate_width(PKW_Einheiten_traffic_custom, w_min, w_max, tmin, tmax, gamma=gamma, PKW_Einheiten=True)
-        
-        # reorder to present_dirs order (important!)
-        direction_custom_dic = {k: direction_custom_dic[k] for k in present_dirs}
-        PKW_Einheiten_traffic_custom = {k: PKW_Einheiten_traffic_custom[k] for k in present_dirs}
+    if (
+        direction_custom_dic is not None
+        and PKW_Einheiten_traffic_custom is not None
+    ):
+        # Zuerst auf aktive Relationen reduzieren und sortieren
+        direction_custom_dic = {
+            k: direction_custom_dic[k]
+            for k in present_dirs
+        }
+
+        PKW_Einheiten_traffic_custom = {
+            k: PKW_Einheiten_traffic_custom[k]
+            for k in present_dirs
+        }
+
+        # Danach Custom-Werte in die jeweilige globale Skalierung aufnehmen
+        custom_kfz_values = [
+            float(values["kfz"])
+            for values in direction_custom_dic.values()
+        ]
+
+        custom_pkw_values = [
+            float(values["PKW_Total"])
+            for values in PKW_Einheiten_traffic_custom.values()
+        ]
+
+        tmin_kfz_custom = min(tmin_kfz, min(custom_kfz_values))
+        tmax_kfz_custom = max(tmax_kfz, max(custom_kfz_values))
+
+        tmin_pkw_custom = min(tmin_pkw, min(custom_pkw_values))
+        tmax_pkw_custom = max(tmax_pkw, max(custom_pkw_values))
+
+        width_custom = calculate_width(
+            direction_custom_dic,
+            w_min,
+            w_max,
+            tmin_kfz_custom,
+            tmax_kfz_custom,
+            gamma=gamma,
+            PKW_Einheiten=False,
+        )
+
+        width_PKW_custom = calculate_width(
+            PKW_Einheiten_traffic_custom,
+            w_min,
+            w_max,
+            tmin_pkw_custom,
+            tmax_pkw_custom,
+            gamma=gamma,
+            PKW_Einheiten=True,
+        )
 
         kfz_custom = np.array([direction_custom_dic[name]["kfz"] for name in present_dirs], dtype=float)
         bike_custom = np.array([direction_custom_dic[name]["rad"] for name in present_dirs], dtype=float)
@@ -1683,8 +1836,10 @@ def generate_png_from_excel(
         "morning_peak": {"start": morning_time_start, "end": morning_time_end},
         "afternoon_peak": {"start": afternoon_time_start, "end": afternoon_time_end},
 
-        "tmin": tmin,
-        "tmax": tmax,
+        "tmin_kfz": tmin_kfz,
+        "tmax_kfz": tmax_kfz,
+        "tmin_pkw": tmin_pkw,
+        "tmax_pkw": tmax_pkw,
         "gamma": gamma,
 
         # Keep your per_direction as-is OR extend it (see below)
@@ -1747,7 +1902,7 @@ def generate_plots_from_direction_values(
 
     # width scaling (use kfz or pkw depending on mode)
     tmin, tmax = float(kfz.min()), float(kfz.max())
-    gamma = 0.5
+    gamma = 1.0
     tmp_dic = {r: {"kfz": direction_values[r]["kfz"], "PKW_Total": direction_values[r]["kfz"]} for r in present_dirs}
 
     use_pkw = mode.upper().startswith("PKW")
