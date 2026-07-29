@@ -41,10 +41,28 @@ def get_figure_renderer(fig):
     return fig._get_renderer()
     
 #PKW_Einheiten faktors
-faktor_rad = 0.5
-faktor_Linienbus = 1.5
-faktor_lkwAnh = 2
-faktor_sonst = 1.5
+PKW_E_FAKTOREN = {
+    "MIT VLSA": {
+        "rad": 0.3,
+        "einspurig": 0.5,
+        "pkw": 1.0,
+        "linienbus": 2.0,
+        "reisebus": 2.0,
+        "lkw": 2.0,
+        "lkw_anhaenger": 4.0,
+        "sonstige": 4.0,
+    },
+    "OHNE VLSA": {
+        "rad": 0.5,
+        "einspurig": 1.0,
+        "pkw": 1.0,
+        "linienbus": 1.5,
+        "reisebus": 1.5,
+        "lkw": 1.5,
+        "lkw_anhaenger": 2.0,
+        "sonstige": 1.5,
+    },
+}
 
 # 12 directions possible (R1..R12) -> endpoints (i,j)
 DIR_TO_FLOW = {
@@ -81,6 +99,7 @@ MIN_POSITIVE_FLOW_WIDTH = 0.05    # Mindestbreite bei mehr als 0 Fahrzeugen
 ZERO_FLOW_LAYOUT_WIDTH = 0.05    # Platz für eine Relation mit 0 Fahrzeugen
 ZERO_FLOW_LINEWIDTH = 1.5   # Breite der gestrichelten Linie
 ZERO_FLOW_DASH_PATTERN = (0, (5, 4))
+ARROW_LABEL_MIN_WIDTH = 0.25
 
 # Group slots
 # Dict mapping (side, type) → list of port IDs
@@ -131,8 +150,9 @@ def get_text_rotation(side):
     return 270
     
 def get_flow_label_rotation(side):
+    # Vertikale Beschriftungen einheitlich von rechts lesbar.
     if side in ("N", "S"):
-        return -90
+        return 270
     return 0
 
 def add_flow_label_before_start(
@@ -143,32 +163,43 @@ def add_flow_label_before_start(
     color,
     fontsize=12,
     occupied_label_boxes=None,
-    collision_step=0.22,
+    collision_step=0.15,
     max_collision_steps=20,
 ):
     """
-    Zeichnet einen farbigen Relationswert am Flussanfang.
+    Zeichnet den Relationswert am Beginn des Relationsbandes.
 
-    Bei einer Überschneidung wird das Label parallel zum Querschnitt
-    beziehungsweise entlang der Tangente des gedrehten Arms verschoben.
-    Der Abstand nach außen bleibt konstant.
+    Verhalten:
+    - Die Beschriftung ist längs zur jeweiligen Zufahrt ausgerichtet.
+    - Alle Texte beginnen an derselben radialen Position.
+    - Bei Kollisionen werden sie ausschließlich quer zum Pfeil
+      entlang des Querschnitts verschoben.
     """
     A = np.asarray(A, dtype=float)
 
     if occupied_label_boxes is None:
         occupied_label_boxes = []
 
-    # Muss immer vor der Kollisionsschleife definiert werden.
+    # Abstand vom Relationsanfang nach außen
     if "|" in str(text):
-        base_distance = 0.85
+        base_distance = 0.35
     else:
-        base_distance = 0.55
+        base_distance = 0.35
 
     nrm = get_side_normal(side)
     tan = get_side_tangent(side)
     angle_deg = get_flow_label_rotation(side)
 
-    # Fester Abstand nach außen.
+    # Textverankerung:
+    # Der Text wächst jeweils vom Relationsanfang nach außen.
+    horizontal_alignment = {
+        "N": "right",
+        "E": "left",
+        "S": "left",
+        "W": "right",
+    }[side]
+
+    # Einheitliche radiale Ausgangslinie
     base_pos = A + base_distance * nrm
 
     text_artist = None
@@ -176,11 +207,10 @@ def add_flow_label_before_start(
 
     for step_index in range(max_collision_steps + 1):
 
-    # Nur in eine Richtung entlang der Achse verschieben.
-    # Dadurch können Labels ihre Reihenfolge nicht mehr tauschen.
-        axis_offset = step_index * collision_step
-
-        pos = base_pos + axis_offset * tan
+        # Kollisionsausweichung wie ursprünglich:
+        # quer zum Pfeil beziehungsweise entlang des Querschnitts
+        transverse_offset = step_index * collision_step
+        pos = base_pos + transverse_offset * tan
 
         if text_artist is not None:
             text_artist.remove()
@@ -191,7 +221,7 @@ def add_flow_label_before_start(
             str(text),
             rotation=angle_deg,
             rotation_mode="anchor",
-            ha="center",
+            ha=horizontal_alignment,
             va="center",
             fontsize=fontsize,
             color=color,
@@ -201,11 +231,16 @@ def add_flow_label_before_start(
         )
 
         ax.figure.canvas.draw()
-
         renderer = get_figure_renderer(ax.figure)
-        current_box = text_artist.get_window_extent(renderer=renderer)
 
-        current_box_with_padding = current_box.expanded(1.25, 1.30)
+        current_box = text_artist.get_window_extent(
+            renderer=renderer
+        )
+
+        current_box_with_padding = current_box.expanded(
+            1.25,
+            1.30,
+        )
 
         collision_found = any(
             current_box_with_padding.overlaps(existing_box)
@@ -216,12 +251,17 @@ def add_flow_label_before_start(
             final_box = current_box_with_padding
             break
 
+    # Falls auch die letzte getestete Position kollidiert,
+    # wird diese dennoch registriert.
     if final_box is None and text_artist is not None:
         renderer = get_figure_renderer(ax.figure)
 
         final_box = text_artist.get_window_extent(
             renderer=renderer
-        ).expanded(1.25, 1.30)
+        ).expanded(
+            1.25,
+            1.30,
+        )
 
     if final_box is not None:
         occupied_label_boxes.append(final_box)
@@ -298,15 +338,15 @@ def add_side_span_line_and_total(ax, P, W, dep_ids, arr_ids, side, total_text,
 
     mid_line = 0.5 * (p1_line + p2_line)
 
-    # nrm zeigt immer nach außen:
-    # außen = Straßenname
-    # innen = Summe
-    street_pos = mid_line + street_gap * nrm
-    total_pos = mid_line - total_gap * nrm
+    # nrm zeigt immer nach außen.
+    # Neue Reihenfolge von innen nach außen:
+    # Relationsbänder -> Querschnittsstrich -> Gesamtsumme -> Straßenname
+    total_pos = mid_line + total_gap * nrm
+    street_pos = mid_line + (total_gap + street_gap) * nrm
 
     rotation = get_text_rotation(side)
 
-    # Summe innen zeichnen
+    # Summe außerhalb des Querschnittsstrichs zeichnen
     ax.text(
         total_pos[0],
         total_pos[1],
@@ -427,88 +467,440 @@ def numeric_block_sum(df, row_start, row_end, col_start, col_end):
 
     return float(numeric_block.to_numpy().sum())
 
-def build_direction_dic(sheets, peak_idx):
-    """Build direction dictionary for a given peak index."""
-    dic = {}
+def build_direction_dic(sheets, start_idx, n_rows=4):
+    """
+    Summiert die Verkehrswerte je Relation für einen frei wählbaren Zeitraum.
+
+    Parameter
+    ----------
+    sheets:
+        Dictionary der eingelesenen Excel-Blätter.
+
+    start_idx:
+        Erste auszuwertende DataFrame-Zeile.
+
+    n_rows:
+        Anzahl der auszuwertenden Zeitintervalle.
+        Standardmäßig 4 Zeilen = 1 Stunde bei 15-Minuten-Intervallen.
+    """
+    if n_rows < 1:
+        raise ValueError("n_rows muss mindestens 1 sein.")
+
+    end_idx = start_idx + n_rows
+    direction_dic = {}
 
     for sheet_name, df in sheets.items():
         if not sheet_name.startswith("R"):
             continue
 
-        kfz_sum = numeric_block_sum(
-            df,
-            peak_idx,
-            peak_idx + 4,
-            2,
-            9,
-        )
-
+        # Fahrrad + gesamter motorisierter Verkehr
         total_sum = numeric_block_sum(
             df,
-            peak_idx,
-            peak_idx + 4,
+            start_idx,
+            end_idx,
             1,
             9,
         )
 
-        SV_sum = numeric_block_sum(
+        # Kfz ohne Fahrräder: Spalten C bis I
+        kfz_sum = numeric_block_sum(
             df,
-            peak_idx,
-            peak_idx + 4,
+            start_idx,
+            end_idx,
+            2,
+            9,
+        )
+
+        # Schwerverkehr: Spalten E bis I
+        sv_sum = numeric_block_sum(
+            df,
+            start_idx,
+            end_idx,
             4,
             9,
         )
 
-        dic[sheet_name] = {
+        # Fahrräder: Spalte B
+        rad_sum = numeric_block_sum(
+            df,
+            start_idx,
+            end_idx,
+            1,
+            2,
+        )
+
+        direction_dic[sheet_name] = {
             "total": total_sum,
             "kfz": kfz_sum,
-            "rad": total_sum - kfz_sum,
-            "Summe_SV": SV_sum,
+            "rad": rad_sum,
+            "Summe_SV": sv_sum,
         }
 
-    return dic
+    return direction_dic
 
-def PKW_Einheiten_traffic_dic(sheets, peak_idx):
+def PKW_Einheiten_traffic_dic(
+    sheets,
+    start_idx,
+    n_rows=4,
+    vlsa_mode="MIT VLSA",
+):
+    """
+    Berechnet Pkw-Einheiten für einen beliebigen Zeitraum.
+    """
+
+    if vlsa_mode not in PKW_E_FAKTOREN:
+        raise ValueError(
+            f"Ungültige VLSA-Auswahl: {vlsa_mode}"
+        )
+
+    faktoren = PKW_E_FAKTOREN[vlsa_mode]
+
+    if n_rows < 1:
+        raise ValueError("n_rows muss mindestens 1 sein.")
+
+    end_idx = start_idx + n_rows
     dic = {}
 
     for sheet_name, df in sheets.items():
         if not sheet_name.startswith("R"):
             continue
 
-        block = df.iloc[peak_idx:peak_idx + 4, 1:9].apply(
-            lambda column: pd.to_numeric(column, errors="coerce")
-        ).fillna(0.0)
+        block = df.iloc[start_idx:end_idx]
 
-        rad = block.iloc[:, 0].sum() * faktor_rad
-        einsp = block.iloc[:, 1].sum()
-        PKW = block.iloc[:, 2].sum()
-        Linienbus = block.iloc[:, 3].sum() * faktor_Linienbus
-        Reisebus = block.iloc[:, 4].sum() * faktor_Linienbus
-        LKW = block.iloc[:, 5].sum() * faktor_Linienbus
-        LKW_Anh = block.iloc[:, 6].sum() * faktor_lkwAnh
-        sons = block.iloc[:, 7].sum() * faktor_sonst
+        rad = (
+            pd.to_numeric(
+                block.iloc[:, 1],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["rad"]
+        )
+
+        einsp = (
+            pd.to_numeric(
+                block.iloc[:, 2],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["einspurig"]
+        )
+
+        pkw = (
+            pd.to_numeric(
+                block.iloc[:, 3],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["pkw"]
+        )
+
+        linienbus = (
+            pd.to_numeric(
+                block.iloc[:, 4],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["linienbus"]
+        )
+
+        reisebus = (
+            pd.to_numeric(
+                block.iloc[:, 5],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["reisebus"]
+        )
+
+        lkw = (
+            pd.to_numeric(
+                block.iloc[:, 6],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["lkw"]
+        )
+
+        lkw_anh = (
+            pd.to_numeric(
+                block.iloc[:, 7],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["lkw_anhaenger"]
+        )
+
+        sonstige = (
+            pd.to_numeric(
+                block.iloc[:, 8],
+                errors="coerce",
+            ).fillna(0).sum()
+            * faktoren["sonstige"]
+        )
 
         dic[sheet_name] = {
             "PKW_Total": round(
                 rad
                 + einsp
-                + PKW
-                + Linienbus
-                + Reisebus
-                + LKW
-                + LKW_Anh
-                + sons
+                + pkw
+                + linienbus
+                + reisebus
+                + lkw
+                + lkw_anh
+                + sonstige
             ),
             "Summe_SV": round(
-                Linienbus
-                + Reisebus
-                + LKW
-                + LKW_Anh
-                + sons
+                linienbus
+                + reisebus
+                + lkw
+                + lkw_anh
+                + sonstige
             ),
         }
 
     return dic
+
+
+
+# --------------------- FG / RAD QUERUNGEN ---------------------
+
+def normalize_text(value):
+    if value is None or pd.isna(value):
+        return ""
+    return (
+        str(value).strip().upper()
+        .replace("Ä", "AE").replace("Ö", "OE").replace("Ü", "UE")
+        .replace("ß", "SS")
+    )
+
+def find_fg_sheet(sheets):
+    """Findet ein Blatt mit Fußgänger-/Radquerungen."""
+    candidates = []
+    for sheet_name, df in sheets.items():
+        n = normalize_text(sheet_name).replace("_", "").replace(".", "").replace(" ", "")
+        if n in {"FG", "FGRAD", "FUSSG", "FUSSGAENGER"}:
+            return sheet_name, df
+        if "FG" in n or "FUSS" in n:
+            candidates.append((sheet_name, df))
+    return candidates[0] if candidates else (None, None)
+
+def _find_fg_header_rows(df):
+    """Sucht die zwei Kopfzeilen der FG-Tabelle dynamisch."""
+    max_scan = min(len(df), 30)
+    for r in range(max_scan - 1):
+        row1 = [normalize_text(v) for v in df.iloc[r].tolist()]
+        row2 = [normalize_text(v) for v in df.iloc[r + 1].tolist()]
+        has_mode = any(("FG" in v or "RAD" in v or "FUSS" in v) for v in row1)
+        has_time = any(v == "ZEIT" for v in row2)
+        if has_mode and has_time:
+            return r, r + 1
+    return None, None
+
+def detect_fg_columns(df):
+    """
+    Erkennt FG-/Radspalten in unterschiedlichen Zählblatt-Layouts.
+    Unterstützt u.a.:
+      - Zeile 1: FG FG FG FG Rad Rad ... / Zeile 2: A B C D A B ...
+      - Zeile 1: FG A, leer, FG C, leer ... / Zeile 2: FG, Rad, FG, Rad ...
+      - Zeile 1: FG, Rad, Rad ... / Zeile 2: C, RW2, RW3 ...
+    """
+    h1, h2 = _find_fg_header_rows(df)
+    if h1 is None:
+        return [], None
+
+    detected = []
+    active_group = None
+    active_relation = None
+
+    for col in range(1, df.shape[1]):
+        top = normalize_text(df.iloc[h1, col])
+        sub = normalize_text(df.iloc[h2, col])
+
+        # Ab der ersten Aggregatspalte beginnen Hilfs-/Spitzenstundenspalten.
+        # Diese gehören nicht mehr zu den eigentlichen Querungsrelationen.
+        combined = f"{top} {sub}"
+        if any(x in combined for x in ["15 MIN", "30 MIN", "1 STD", "/ 15", "/ 30", "/ 1"]):
+            break
+
+        mode = None
+        relation = None
+
+        # Layout "FG A" + Unterzeile "FG/Rad"
+        m = re.match(r"^(FG|FUSS(?:GAENGER)?)\s*([A-Z0-9_-]+)$", top)
+        if m:
+            active_relation = m.group(2)
+            relation = active_relation
+            if "RAD" in sub or sub.startswith("RW"):
+                mode = "RAD"
+            elif "FG" in sub or "FUSS" in sub:
+                mode = "FG"
+            else:
+                mode = "FG"
+        else:
+            if "FG" in top or "FUSS" in top:
+                active_group = "FG"
+            elif "RAD" in top:
+                active_group = "RAD"
+
+            if sub and sub not in {"FG", "RAD"}:
+                relation = sub
+                mode = active_group
+            elif sub in {"FG", "RAD"}:
+                mode = sub
+                relation = active_relation
+
+        if not relation or mode not in {"FG", "RAD"}:
+            continue
+
+        # Nur plausible Relationsbezeichnungen übernehmen
+        if relation in {"FG/R", "SUMME", "ZEIT"}:
+            continue
+
+        detected.append({
+            "column": col,
+            "mode": mode,
+            "relation": relation,
+            "key": f"{mode}:{relation}",
+        })
+
+    # Duplikate entfernen
+    unique = []
+    seen = set()
+    for item in detected:
+        marker = (item["column"], item["mode"], item["relation"])
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(item)
+    return unique, h2 + 1
+
+def find_sum_row_index(df):
+    for idx, value in enumerate(df.iloc[:, 0]):
+        if isinstance(value, str) and "SUMME" in value.upper():
+            return idx
+    return len(df)
+
+def build_fg_values(fg_df, fg_columns, start_idx, n_rows):
+    end_idx = min(start_idx + n_rows, len(fg_df))
+    result = {}
+    for item in fg_columns:
+        value = pd.to_numeric(
+            fg_df.iloc[start_idx:end_idx, item["column"]],
+            errors="coerce",
+        ).fillna(0.0).sum()
+        key = item["key"]
+        result[key] = {
+            "key": key,
+            "mode": item["mode"],
+            "relation": item["relation"],
+            "value": float(value),
+        }
+    return result
+
+def add_fg_crossing(
+    ax,
+    side,
+    fg_value=0.0,
+    rad_value=0.0,
+    color="#333333",
+    linewidth=1.8,
+    fontsize=11,
+    radial_offset=0.34,
+    show_fg=True,
+    show_rad=True,
+):
+    """
+    Zeichnet eine kurze gestrichelte Querung knapp außerhalb der
+    Relationsanfänge/-enden. Die Beschriftung liegt auf der Innenseite
+    der Linie, also immer in Richtung Kreuzungsmittelpunkt.
+    """
+    nrm = get_side_normal(side)
+    tan = get_side_tangent(side)
+
+    # Knapp außerhalb der Port-/Pfeilbasis bei Radius R.
+    center = nrm * (R + radial_offset)
+
+    # Kürzer als bisher, damit die Querung nur den Straßenquerschnitt markiert.
+    half_length = 0.95
+    start = center - half_length * tan
+    end = center + half_length * tan
+
+    ax.plot(
+        [start[0], end[0]],
+        [start[1], end[1]],
+        color=color,
+        linewidth=linewidth,
+        linestyle=(0, (4, 3)),
+        zorder=70,
+        clip_on=False,
+    )
+
+    label_parts = []
+    if show_fg and fg_value is not None:
+        label_parts.append(f"FG {fmt_int_dot(fg_value)}")
+    if show_rad and rad_value is not None:
+        label_parts.append(f"Rad {fmt_int_dot(rad_value)}")
+
+    if not label_parts:
+        return
+
+    label = " - ".join(label_parts)
+
+    # Unterhalb/innenseitig der Querung, immer Richtung Kreuzungsmittelpunkt.
+    label_pos = center - 0.22 * nrm
+    rotation = 270 if side in ("E", "W") else 0
+
+    ax.text(
+        label_pos[0],
+        label_pos[1],
+        label,
+        ha="center",
+        va="center",
+        rotation=rotation,
+        rotation_mode="anchor",
+        fontsize=fontsize,
+        color=color,
+        fontweight="bold",
+        zorder=71,
+        clip_on=False,
+    )
+
+
+def draw_fg_relations(
+    ax,
+    fg_relations,
+    show_fg=True,
+    show_rad=True,
+):
+    """Fasst FG und Rad je Querung zusammen und zeichnet sie."""
+    if not fg_relations or (not show_fg and not show_rad):
+        return
+
+    grouped = {}
+    for item in fg_relations:
+        side = item.get("side")
+        if side not in {"N", "E", "S", "W"}:
+            continue
+
+        relation = str(item.get("relation", "")).strip()
+        group_key = (side, relation)
+        grouped.setdefault(group_key, {"FG": None, "RAD": None})
+        grouped[group_key][item.get("mode", "FG")] = float(item.get("value", 0.0))
+
+    # Bei mehreren Querungen auf derselben Seite leicht nach außen staffeln.
+    side_counts = {s: 0 for s in ("N", "E", "S", "W")}
+    for (side, _relation), values in grouped.items():
+        idx = side_counts[side]
+        side_counts[side] += 1
+
+        fg_value = values.get("FG") if show_fg else None
+        rad_value = values.get("RAD") if show_rad else None
+
+        if fg_value is None and rad_value is None:
+            continue
+
+        add_fg_crossing(
+            ax,
+            side,
+            fg_value=fg_value,
+            rad_value=rad_value,
+            radial_offset=0.34 + idx * 0.28,
+            show_fg=show_fg,
+            show_rad=show_rad,
+        )
+
 
 def _sv_stats(total: float, sv: float) -> Dict[str, float]:
     total = float(total)
@@ -736,8 +1128,8 @@ def align_rect_pairs_shift_groups(P: Dict[int, np.ndarray], pairs: List[Tuple[in
         P[b] = Pb
 
 def add_label_background_rect(ax, outer_center, span_width, tan_vec, inward_vec, text,
-                                fontsize, color="#333333", zorder=9,
-                                depth_pad=1.6, min_depth=0.32, min_width=0.25, ):
+                                fontsize, color="#666666", zorder=9,
+                                depth_pad=1.6, min_depth=0.32, min_width=ARROW_LABEL_MIN_WIDTH, ):
     """
     Zeichnet ein graues Rechteck an der Basis des Pfeils.
     - Breite (entlang tan_vec) = grafische Breite der Relation(en) an der Basis
@@ -769,7 +1161,7 @@ def add_label_background_rect(ax, outer_center, span_width, tan_vec, inward_vec,
     )
     return rect_center
 
-def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zorder=10,
+def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#666666", zorder=10,
                     label: Optional[str] = None, label_color: str = "white",
                     label_fontsize: int = 12):
     """
@@ -797,6 +1189,27 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
     base_min = P_min - tan * (float(W[pid_min]) / 2.0)
     base_max = P_max + tan * (float(W[pid_max]) / 2.0)
 
+    # Falls eine Beschriftung vorhanden ist, muss die Pfeilbasis
+    # mindestens so breit sein wie das graue Beschriftungsrechteck.
+    if label is not None:
+        label_text = str(label)
+
+        # Mindestbreite des grauen Rechtecks.
+        # Entspricht dem min_width-Wert in add_label_background_rect().
+        required_base_width = ARROW_LABEL_MIN_WIDTH
+
+        current_base_width = float(
+            np.linalg.norm(base_max - base_min)
+        )
+
+        if current_base_width < required_base_width:
+            additional_width = (
+                required_base_width - current_base_width
+            ) / 2.0
+
+            base_min = base_min - tan * additional_width
+            base_max = base_max + tan * additional_width
+
     base_center = 0.5 * (base_min + base_max)
 
     if outward:
@@ -806,15 +1219,17 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
 
     tri = np.vstack([tip, base_min, base_max])
 
-    ax.add_patch(
-        Polygon(
-            tri,
-            closed=True,
-            facecolor=color,
-            edgecolor="none",
-            zorder=zorder
+    # Einfahrend (outward=False): nur Rechteck; ausfahrend: Dreieck + Rechteck
+    if outward:
+        ax.add_patch(
+            Polygon(
+                tri,
+                closed=True,
+                facecolor=color,
+                edgecolor="none",
+                zorder=zorder
+            )
         )
-    )
 
     if label is not None:
         label_text = str(label)
@@ -832,7 +1247,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
         fs = label_fontsize
 
         if side in ("N", "S"):
-            label_rotation = -90
+            label_rotation = 270
         else:
             label_rotation = 0
 
@@ -865,7 +1280,7 @@ def add_group_arrow(ax, P, W, group_ids, side, outward=True, color="#444444", zo
             clip_on=True,
         )
 
-def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True, kfz_label_fontsize: int = 12, arrow_label_fontsize: int = 12, side_total_fontsize: int = 18, street_names: Optional[Dict[str, str]] = None, ):
+def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, start_time, end_time, side_colors, d_NS, d_WE, fmt: str = "png", show_bicycle_labels: bool = True, kfz_label_fontsize: int = 12, arrow_label_fontsize: int = 12, side_total_fontsize: int = 18, street_names: Optional[Dict[str, str]] = None, fg_relations: Optional[List[Dict[str, Any]]] = None, show_fg_crossings: bool = True, show_rad_crossings: bool = True, ):
     """Create a PNG plot for given traffic and width data."""
     # Update SIDE_COLOR with user-provided side_colors
     if side_colors:
@@ -1098,8 +1513,8 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
                 color=item["color"],
                 fontsize=kfz_label_fontsize,
                 occupied_label_boxes=side_occupied_boxes,
-                collision_step=0.20,
-                max_collision_steps=25,
+                collision_step=0.15,
+                max_collision_steps=20,
             )
         
     # ---------- GROUP ARROWS ----------
@@ -1107,48 +1522,46 @@ def create_plot(kfz, bike, width, flows_present, verkehrszählungsort, suffix, s
     dep_kfz_by_side = side_sums["dep_kfz"]
     arr_kfz_by_side = side_sums["arr_kfz"]
     total_kfz_by_side = side_sums["total_kfz"]
+
     for side in ("N", "E", "S", "W"):
         ids_dep = GROUP_ACTIVE[(side, "dep")]
+        ids_arr = GROUP_ACTIVE[(side, "arr")]
+
+        # Einfahrend: nur Summenrechteck, kein Dreieck
         if len(ids_dep) >= 1:
             dep_label = fmt_int_dot(dep_kfz_by_side.get(side, 0.0))
             add_group_arrow(
-                ax, P, W, ids_dep, side,
-                outward=False,
-                color="#444444",
-                label=dep_label,
-                label_color="white",
-                label_fontsize=arrow_label_fontsize,
+                ax, P, W, ids_dep, side, outward=False,
+                color="#666666", label=dep_label,
+                label_color="white", label_fontsize=arrow_label_fontsize,
             )
 
-        ids_arr = GROUP_ACTIVE[(side, "arr")]
+        # Ausfahrend: Pfeil + Summenrechteck
         if len(ids_arr) >= 1:
             arr_label = fmt_int_dot(arr_kfz_by_side.get(side, 0.0))
             add_group_arrow(
-                ax, P, W, ids_arr, side,
-                outward=True,
-                color="#444444",
-                label=arr_label,
-                label_color="white",
-                label_fontsize=arrow_label_fontsize
+                ax, P, W, ids_arr, side, outward=True,
+                color="#666666", label=arr_label,
+                label_color="white", label_fontsize=arrow_label_fontsize,
             )
 
         if len(ids_dep) >= 1 or len(ids_arr) >= 1:
             total_val = fmt_int_dot(total_kfz_by_side.get(side, 0.0))
             add_side_span_line_and_total(
-                ax, P, W,
-                dep_ids=ids_dep,
-                arr_ids=ids_arr,
-                side=side,
-                total_text=total_val,
-                d_NS=d_NS,
-                d_WE=d_WE,
-                line_lw=3,
-                text_fontsize=side_total_fontsize,
-                offset_line=1.75,
-                offset_text=1.5,
+                ax, P, W, dep_ids=ids_dep, arr_ids=ids_arr, side=side,
+                total_text=total_val, d_NS=d_NS, d_WE=d_WE, line_lw=3,
+                text_fontsize=side_total_fontsize, offset_line=1.48,
+                offset_text=1.5, total_gap=0.30, street_gap=0.42,
                 street_name=(street_names or {}).get(side, ""),
             )
 
+    # ---------- FG / RAD QUERUNGEN ----------
+    draw_fg_relations(
+        ax,
+        fg_relations,
+        show_fg=show_fg_crossings,
+        show_rad=show_rad_crossings,
+    )
 
     buf = io.BytesIO()
     if fmt in ("png", "jpg", "jpeg", "pdf"):
@@ -1167,17 +1580,29 @@ def generate_png_from_excel(
     side_colors: Optional[Dict[str, str]] = None,
     d_NS: float = 1,
     d_WE: float = 1,
-    w_min: float = 0.1,
-    w_max: float = 1.1,
+    w_min: float = 0.0,
+    w_max: float = 1.4,
     mode: str = "KFZ",
+    vlsa_mode: str = "MIT VLSA",
     use_custom_window: bool = False,
-    custom_start_time: Optional[str] = None,
+    custom_start_time=None,
+    custom_end_time=None,
     show_bicycle_labels: bool = True,
     kfz_label_fontsize: int = 12,
     arrow_label_fontsize: int = 12,
     side_total_fontsize: int = 18,
     street_names: Optional[Dict[str, str]] = None,
+    fg_mapping: Optional[Dict[str, str]] = None,
+    show_fg_crossings: bool = True,
+    show_rad_crossings: bool = True,
 ) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
+
+    if vlsa_mode not in PKW_E_FAKTOREN:
+        raise ValueError(
+            f"Ungültige VLSA-Auswahl: {vlsa_mode}"
+        )
+
+    faktoren = PKW_E_FAKTOREN[vlsa_mode]
 
     verkehrszählungsort = "Unbekannter Ort"
 
@@ -1190,6 +1615,10 @@ def generate_png_from_excel(
     
     # Load sheets for peak calculation
     sheets = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=None, header=None)
+
+    fg_sheet_name, fg_df = find_fg_sheet(sheets)
+    fg_columns, fg_data_start_idx = (detect_fg_columns(fg_df) if fg_df is not None else ([], None))
+    fg_sum_idx = find_sum_row_index(fg_df) if fg_df is not None else None
     
     first_R_df = None
     first_R_sheet_name = None
@@ -1226,41 +1655,71 @@ def generate_png_from_excel(
 
     summe_row_number = summe_idx + 1
 
-    def _parse_interval(cell_value: Any) -> tuple[Optional[str], Optional[str]]:
-        """
-        Parse a time cell like '07:00-07:15' (also handles spaces and en-dash).
-        Returns ('07:00','07:15') or (None,None) if not parseable.
-        """
+    def _parse_interval(cell_value):
         if cell_value is None:
             return None, None
-        s = str(cell_value).strip()
-        s = s.replace("–", "-").replace("—", "-")
-        s = s.replace(" ", "")
-        if "-" not in s:
+
+        text = str(cell_value).strip()
+        text = text.replace("–", "-").replace("—", "-")
+        text = text.replace(" ", "")
+
+        if "-" not in text:
             return None, None
-        a, b = s.split("-", 1)
-        if len(a) == 5 and len(b) == 5:
-            return a, b
-        return None, None
 
+        parts = text.split("-", 1)
 
-    def _find_row_for_start(hhmm: str) -> int:
-        """
-        Find the row where the time window starts at hhmm.
-        Excel format is like '7:45-8:00'.
-        """
+        if len(parts) != 2:
+            return None, None
+
+        start_text, end_text = parts
+
+        def normalize_time(value):
+            try:
+                hour_text, minute_text = value.split(":", 1)
+
+                hour = int(hour_text)
+                minute = int(minute_text)
+
+                # 24:00 als Tagesende erlauben
+                if hour == 24 and minute == 0:
+                    return "24:00"
+
+                if not 0 <= hour <= 23:
+                    return None
+
+                if not 0 <= minute <= 59:
+                    return None
+
+                return f"{hour:02d}:{minute:02d}"
+
+            except (ValueError, TypeError, AttributeError):
+                return None
+
+        start_time = normalize_time(start_text)
+        end_time = normalize_time(end_text)
+
+        if start_time is None or end_time is None:
+            return None, None
+
+        return start_time, end_time
+
+    def _find_row_for_start(hhmm):
+        target_time = datetime.strptime(
+            hhmm,
+            "%H:%M",
+        ).strftime("%H:%M")
+
         for i in range(13, summe_idx):
-            cell = str(first_R_df.iloc[i, 0])
-            start = cell.split("-")[0].strip()
+            interval_start, _ = _parse_interval(
+                first_R_df.iloc[i, 0]
+            )
 
-            # pad hour so '7:45' -> '07:45'
-            h, m = start.split(":")
-            start_norm = f"{int(h):02d}:{m}"
-
-            if start_norm == hhmm:
+            if interval_start == target_time:
                 return i
 
-        raise ValueError(f"Custom start time {hhmm} not found in Excel.")
+        raise ValueError(
+            f"Startzeit {target_time} wurde in Excel nicht gefunden."
+        )
 
     # Read directions
     direction_dic = {}
@@ -1289,14 +1748,45 @@ def generate_png_from_excel(
         if sheet_name.startswith("R"):
             ws = wb[sheet_name]
 
-            rad = cell(ws, f"B{summe_row_number}") * faktor_rad
-            einsp = cell(ws, f"C{summe_row_number}")
-            PKW = cell(ws, f"D{summe_row_number}")
-            Linienbus = cell(ws, f"E{summe_row_number}") * faktor_Linienbus
-            Reisebus = cell(ws, f"F{summe_row_number}") * faktor_Linienbus
-            LKW = cell(ws, f"G{summe_row_number}") * faktor_Linienbus
-            LKW_Anh = cell(ws, f"H{summe_row_number}") * faktor_lkwAnh
-            sons = cell(ws, f"I{summe_row_number}") * faktor_sonst
+            rad = (
+                cell(ws, f"B{summe_row_number}")
+                * faktoren["rad"]
+            )
+
+            einsp = (
+                cell(ws, f"C{summe_row_number}")
+                * faktoren["einspurig"]
+            )
+
+            PKW = (
+                cell(ws, f"D{summe_row_number}")
+                * faktoren["pkw"]
+            )
+
+            Linienbus = (
+                cell(ws, f"E{summe_row_number}")
+                * faktoren["linienbus"]
+            )
+
+            Reisebus = (
+                cell(ws, f"F{summe_row_number}")
+                * faktoren["reisebus"]
+            )
+
+            LKW = (
+                cell(ws, f"G{summe_row_number}")
+                * faktoren["lkw"]
+            )
+
+            LKW_Anh = (
+                cell(ws, f"H{summe_row_number}")
+                * faktoren["lkw_anhaenger"]
+            )
+
+            sons = (
+                cell(ws, f"I{summe_row_number}")
+                * faktoren["sonstige"]
+            )
 
             PKW_direction_general_dic[sheet_name] = {
                 "PKW_Total": round(
@@ -1353,30 +1843,83 @@ def generate_png_from_excel(
             afternoon_time_end = time_end
             afternoon_peak_start_idx = idx
     
-    col = 1
+   # --------------------------------------------------
+    # Ganztageszeitraum über ALLE R-Blätter bestimmen
+    # --------------------------------------------------
+    #
+    # Beginn:
+    # frühester Zeitpunkt, zu dem auf irgendeiner Relation
+    # mindestens ein Fahrzeug bzw. Fahrrad gezählt wurde.
+    #
+    # Ende:
+    # spätester Zeitpunkt, zu dem auf irgendeiner Relation
+    # mindestens ein Fahrzeug bzw. Fahrrad gezählt wurde.
 
-    first_idx = None
-    last_idx = None
+    def time_to_minutes(hhmm: str) -> int:
+        """
+        Wandelt eine Uhrzeit wie '7:15' oder '07:15'
+        in Minuten seit Mitternacht um.
+        """
+        hour, minute = hhmm.strip().split(":")
+        return int(hour) * 60 + int(minute)
 
-    for row_idx in range(13, summe_idx):
-        row_values = pd.to_numeric(
-            first_R_df.iloc[row_idx, 1:9],
-            errors="coerce"
-        ).fillna(0.0)
 
-        if (row_values.abs() > 0).any():
-            if first_idx is None:
-                first_idx = row_idx
+    day_start_candidates = []
+    day_end_candidates = []
 
-            last_idx = row_idx
+    for sheet_name, df in sheets.items():
+        if not sheet_name.startswith("R"):
+            continue
 
-    if first_idx is None or last_idx is None:
+        # SUMME-Zeile für das jeweilige R-Blatt bestimmen
+        sheet_summe_idx = None
+
+        for row_idx, value in enumerate(df.iloc[:, 0]):
+            if isinstance(value, str) and "SUMME" in value.upper():
+                sheet_summe_idx = row_idx
+                break
+
+        if sheet_summe_idx is None:
+            continue
+
+        for row_idx in range(13, sheet_summe_idx):
+
+            row_values = pd.to_numeric(
+                df.iloc[row_idx, 1:9],
+                errors="coerce"
+            ).fillna(0.0)
+
+            # Nur Zeitintervalle mit tatsächlichem Aufkommen berücksichtigen
+            if not (row_values.abs() > 0).any():
+                continue
+
+            interval_start, interval_end = _parse_interval(
+                df.iloc[row_idx, 0]
+            )
+
+            if interval_start is None or interval_end is None:
+                continue
+
+            day_start_candidates.append(interval_start)
+            day_end_candidates.append(interval_end)
+
+
+    if not day_start_candidates or not day_end_candidates:
         raise ValueError(
-            f"Keine Verkehrsdaten im Referenzblatt {first_R_sheet_name} gefunden."
+            "In keinem R-Blatt wurden gültige Zeitintervalle "
+            "mit Verkehrswerten gefunden."
         )
 
-    day_start_time = str(first_R_df.iloc[first_idx, 0]).split("-")[0].strip()
-    day_end_time = str(first_R_df.iloc[last_idx, 0]).split("-")[-1].strip()
+
+    day_start_time = min(
+        day_start_candidates,
+        key=time_to_minutes,
+    )
+
+    day_end_time = max(
+        day_end_candidates,
+        key=time_to_minutes,
+    )
 
     morning_time_start = str(morning_time_start).split("-")[0]
     morning_time_end   = str(morning_time_end).split("-")[-1]
@@ -1399,23 +1942,68 @@ def generate_png_from_excel(
 
     if use_custom_window:
         if not custom_start_time:
-            raise ValueError("use_custom_window=True but custom_start_time is None")
+            raise ValueError(
+                "Für den benutzerdefinierten Zeitraum fehlt die Startzeit."
+            )
 
-        # end = start + 1 hour
+        # Standardmäßig eine Stunde auswerten
+        if not custom_end_time:
+            start_dt = datetime.strptime(custom_start_time, "%H:%M")
+            custom_end_time = (
+                start_dt + timedelta(hours=1)
+            ).strftime("%H:%M")
+
         start_dt = datetime.strptime(custom_start_time, "%H:%M")
+        end_dt = datetime.strptime(custom_end_time, "%H:%M")
+
+        if end_dt <= start_dt:
+            raise ValueError(
+                "Die Endzeit muss nach der Startzeit liegen."
+            )
+
+        duration_minutes = int(
+            (end_dt - start_dt).total_seconds() / 60
+        )
+
+        # Excel enthält 15-Minuten-Intervalle
+        if duration_minutes % 15 != 0:
+            raise ValueError(
+                "Der Auswertezeitraum muss ein Vielfaches "
+                "von 15 Minuten sein."
+            )
+
+        custom_n_rows = duration_minutes // 15
+
         custom_time_start = custom_start_time
-        custom_time_end = (start_dt + timedelta(hours=1)).strftime("%H:%M")
+        custom_time_end = custom_end_time
 
-        # locate the row where the interval starts at custom_time_start
-        custom_start_idx = _find_row_for_start(custom_time_start)
+        custom_start_idx = _find_row_for_start(
+            custom_time_start
+        )
 
-        # we assume 15-min steps => 1 hour = 4 rows
-        # make sure we don't go beyond SUMME
-        if custom_start_idx + 3 >= summe_idx:
-            raise ValueError("Custom 1h window exceeds available data in Excel.")
+        custom_end_idx = custom_start_idx + custom_n_rows
 
-        direction_custom_dic = build_direction_dic(sheets, custom_start_idx)
-        PKW_Einheiten_traffic_custom = PKW_Einheiten_traffic_dic(sheets, custom_start_idx)
+        if custom_end_idx > summe_idx:
+            raise ValueError(
+                f"Der gewählte Zeitraum "
+                f"{custom_time_start}–{custom_time_end} "
+                "überschreitet die verfügbaren Zähldaten."
+            )
+
+        direction_custom_dic = build_direction_dic(
+            sheets,
+            custom_start_idx,
+            n_rows=custom_n_rows,
+        )
+
+        PKW_Einheiten_traffic_custom = (
+            PKW_Einheiten_traffic_dic(
+                sheets,
+                custom_start_idx,
+                n_rows=custom_n_rows,
+                vlsa_mode=vlsa_mode,
+            )
+        )
     
     kfz_morning_summe = sum(value["kfz"] for value in direction_morning_dic.values())
     kfz_afternoon_summe = sum(value["kfz"] for value in direction_afternoon_dic.values())
@@ -1427,8 +2015,16 @@ def generate_png_from_excel(
     PKW_Einheiten_Tag_SV = sum(value["Summe_SV"] for value in PKW_direction_general_dic.values())
 
     
-    PKW_Einheiten_traffic_morning = PKW_Einheiten_traffic_dic(sheets, morning_start_idx)
-    PKW_Einheiten_traffic_afternoon = PKW_Einheiten_traffic_dic(sheets, afternoon_peak_start_idx)
+    PKW_Einheiten_traffic_morning = PKW_Einheiten_traffic_dic(
+    sheets,
+    morning_start_idx,
+    vlsa_mode=vlsa_mode,
+    )
+    PKW_Einheiten_traffic_afternoon = PKW_Einheiten_traffic_dic(
+    sheets,
+    afternoon_peak_start_idx,
+    vlsa_mode=vlsa_mode,
+    )
 
     PKW_Einheiten_morning_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_morning.values())
     PKW_Einheiten_afternoon_summe = sum(value["PKW_Total"] for value in PKW_Einheiten_traffic_afternoon.values())
@@ -1767,46 +2363,117 @@ def generate_png_from_excel(
         side_morning_sel   = side_morning
         side_afternoon_sel = side_afternoon
     
+    # FG-/Radwerte für dieselben Zeiträume aufbauen
+    fg_periods = {"full_day": [], "morning_peak": [], "afternoon_peak": [], "custom": []}
+    if fg_df is not None and fg_columns and fg_data_start_idx is not None:
+        # Zeitzeilen im FG-Blatt anhand der Uhrzeit suchen
+        def _fg_row_for_start(hhmm):
+            target = datetime.strptime(str(hhmm).strip(), "%H:%M").strftime("%H:%M")
+            upper = fg_sum_idx if fg_sum_idx is not None else len(fg_df)
+            for ridx in range(fg_data_start_idx, upper):
+                a, _ = _parse_interval(fg_df.iloc[ridx, 0])
+                if a == target:
+                    return ridx
+            return None
+
+        full_start = fg_data_start_idx
+        full_end = fg_sum_idx if fg_sum_idx is not None else len(fg_df)
+        fg_full = build_fg_values(fg_df, fg_columns, full_start, max(0, full_end-full_start))
+
+        fm = _fg_row_for_start(morning_time_start)
+        fa = _fg_row_for_start(afternoon_time_start)
+        fg_morn = build_fg_values(fg_df, fg_columns, fm, 4) if fm is not None else {}
+        fg_aft = build_fg_values(fg_df, fg_columns, fa, 4) if fa is not None else {}
+        fg_custom_vals = {}
+        if direction_custom_dic is not None:
+            fc = _fg_row_for_start(custom_time_start)
+            if fc is not None:
+                fg_custom_vals = build_fg_values(fg_df, fg_columns, fc, custom_n_rows)
+
+        def _to_plot_list(values):
+            out = []
+            for key, item in values.items():
+                side = (fg_mapping or {}).get(key, "")
+                if side in {"N", "E", "S", "W"}:
+                    out.append({**item, "side": side})
+            return out
+
+        fg_periods["full_day"] = _to_plot_list(fg_full)
+        fg_periods["morning_peak"] = _to_plot_list(fg_morn)
+        fg_periods["afternoon_peak"] = _to_plot_list(fg_aft)
+        fg_periods["custom"] = _to_plot_list(fg_custom_vals)
+
+        fg_values_by_period = {
+            "full_day": fg_full,
+            "morning_peak": fg_morn,
+            "afternoon_peak": fg_aft,
+            "custom": fg_custom_vals,
+        }
+    else:
+        fg_values_by_period = {
+            "full_day": {},
+            "morning_peak": {},
+            "afternoon_peak": {},
+            "custom": {},
+        }
+
     # Generate three plots
     pngs = []
     svgs = []
     pdfs = []
-    def _add_both(flow, bike, w, suffix, start, end, location_name=verkehrszählungsort):
+    def _add_both(flow, bike, w, suffix, start, end, location_name=verkehrszählungsort, fg_relations=None):
         pngs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="png", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names,
+            fmt="png", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names, fg_relations=fg_relations,
+            show_fg_crossings=show_fg_crossings, show_rad_crossings=show_rad_crossings,
         ))
         svgs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="svg", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names, 
+            fmt="svg", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize,  side_total_fontsize=side_total_fontsize, street_names=street_names, fg_relations=fg_relations,
+            show_fg_crossings=show_fg_crossings, show_rad_crossings=show_rad_crossings,
         ))
         pdfs.append(create_plot(
             flow, bike, w, flows_present, location_name,
             suffix, start, end, side_colors, d_NS, d_WE,
-            fmt="pdf", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize, side_total_fontsize=side_total_fontsize, street_names=street_names,
+            fmt="pdf", show_bicycle_labels=show_bicycle_labels, kfz_label_fontsize=kfz_label_fontsize, arrow_label_fontsize=arrow_label_fontsize, side_total_fontsize=side_total_fontsize, street_names=street_names, fg_relations=fg_relations,
+            show_fg_crossings=show_fg_crossings, show_rad_crossings=show_rad_crossings,
         ))
 
-    _add_both(flow_general,   bike_general,   width_general_sel,   suffix_general,   day_start_time,       day_end_time)
-    _add_both(flow_morning,   bike_morning,   width_morning_sel,   suffix_morning,   morning_time_start,   morning_time_end)
-    _add_both(flow_afternoon, bike_afternoon, width_afternoon_sel, suffix_afternoon, afternoon_time_start, afternoon_time_end)
+    _add_both(flow_general, bike_general, width_general_sel, suffix_general, day_start_time, day_end_time, fg_relations=fg_periods["full_day"])
+    _add_both(flow_morning, bike_morning, width_morning_sel, suffix_morning, morning_time_start, morning_time_end, fg_relations=fg_periods["morning_peak"])
+    _add_both(flow_afternoon, bike_afternoon, width_afternoon_sel, suffix_afternoon, afternoon_time_start, afternoon_time_end, fg_relations=fg_periods["afternoon_peak"])
 
     if direction_custom_dic is not None:
+        custom_suffix_time = (
+            f"{custom_time_start.replace(':', '')}_"
+            f"{custom_time_end.replace(':', '')}"
+        )
+
         if use_pkw:
             flow_custom = PKW_custom
             width_custom_sel = width_PKW_custom
-            suffix_custom = "custom_1h_PKW_Einheiten"
+            suffix_custom = (
+                f"custom_{custom_suffix_time}_PKW_Einheiten"
+            )
             side_custom_sel = PKW_side_custom
         else:
             flow_custom = kfz_custom
             width_custom_sel = width_custom
-            suffix_custom = "custom_1h"
+            suffix_custom = f"custom_{custom_suffix_time}"
             side_custom_sel = side_custom
 
-        _add_both(flow_custom, bike_custom, width_custom_sel, suffix_custom, custom_time_start, custom_time_end)
-
-    
+        _add_both(
+            flow_custom,
+            bike_custom,
+            width_custom_sel,
+            suffix_custom,
+            custom_time_start,
+            custom_time_end,
+            fg_relations=fg_periods["custom"],
+        )
+        
     totals = {
     "full_day_kfz": float(np.sum(kfz_general)),
     "morning_peak_kfz": float(np.sum(kfz_morning)),
@@ -1831,6 +2498,15 @@ def generate_png_from_excel(
     meta = {
         "location": verkehrszählungsort,
         "mode": unit_label, 
+        "vlsa_mode": vlsa_mode,
+        "pkw_e_faktoren": faktoren.copy(),
+        "fg": {
+            "sheet": fg_sheet_name,
+            "detected_columns": fg_columns,
+            "mapping": fg_mapping or {},
+            "periods": fg_periods,
+            "values_by_period": fg_values_by_period,
+        },
 
         "day": {"start": day_start_time, "end": day_end_time},
         "morning_peak": {"start": morning_time_start, "end": morning_time_end},
@@ -1881,14 +2557,15 @@ def generate_plots_from_direction_values(
     side_colors: Optional[Dict[str, str]] = None,
     d_NS: float = 1.5,
     d_WE: float = 1.5,
-    w_min: float = 0.1,
-    w_max: float = 1.1,
+    w_min: float = 0.0,
+    w_max: float = 1.4,
     mode: str = "KFZ",
     show_bicycle_labels: bool = True,
     kfz_label_fontsize: int = 12,
     arrow_label_fontsize: int = 12,
     side_total_fontsize: int = 18,
     street_names: Optional[Dict[str, str]] = None,
+    fg_relations: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[Tuple[bytes, str]], List[Tuple[bytes, str]], List[Tuple[bytes, str]], Dict[str, Any]]:
     
     # keep only R1..R12 that exist
@@ -1918,6 +2595,7 @@ def generate_plots_from_direction_values(
         arrow_label_fontsize=arrow_label_fontsize,
         side_total_fontsize=side_total_fontsize,
         street_names=street_names,
+        fg_relations=fg_relations,
     )]
 
     svgs = [create_plot(
@@ -1929,6 +2607,7 @@ def generate_plots_from_direction_values(
         arrow_label_fontsize=arrow_label_fontsize,
         side_total_fontsize=side_total_fontsize,
         street_names=street_names,
+        fg_relations=fg_relations,
     )]
 
     pdfs = [create_plot(
@@ -1940,6 +2619,7 @@ def generate_plots_from_direction_values(
         arrow_label_fontsize=arrow_label_fontsize,
         side_total_fontsize=side_total_fontsize,
         street_names=street_names,
+        fg_relations=fg_relations,
     )]
 
     meta = {"location": location, "mode": mode, "per_direction": direction_values}

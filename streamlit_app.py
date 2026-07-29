@@ -2,7 +2,12 @@ import streamlit as st
 import pandas as pd
 import io
 from datetime import datetime, timedelta
-from main import generate_png_from_excel, generate_plots_from_direction_values
+from main import (
+    generate_png_from_excel,
+    generate_plots_from_direction_values,
+    find_fg_sheet,
+    detect_fg_columns,
+)
 
 # Run with:
 #   python -m streamlit run streamlit_app.py
@@ -36,7 +41,7 @@ TEXT = {
         "North-South": "Nord-Süd: Abstand zwischen ankommenden und abfahrenden Strömen",
         "d-helper": "Abstand von der Mittellinie bis zur Mitte jeder Stromgruppe",
         "East-West": "Ost-West: Abstand zwischen ankommenden und abfahrenden Strömen",
-        "dir_table": "Verkehr nach Kreuzungsrichtung",
+        "dir_table": "Aufkommen nach Relation",
         "cardinal_table": "Verkehr nach Himmelsrichtung",
         "sv_table": "Gesamtverkehr & Schwerverkehr-Anteil",
         "download": "Herunterladen",
@@ -58,7 +63,6 @@ TEXT = {
         "Plot morning peak": "Diagramm Morgenspitzenstunde",
         "Plot afternoon peak": "Diagramm Nachmittagsspitzenstunde",
         "Time window": "Zeitfenster",
-        "Define own 1h time window": "Definiere eigenes einstündiges Zeitfenster",
         "Selected window": "Ausgewähltes Zeitfenster",
         "Start time": "Zeitbeginn",
         "User direction inputs (R1–R12)": "Benutzerdefinierte Richtungs-Inputs",
@@ -75,7 +79,10 @@ TEXT = {
         "SV share" : "SV-Anteil",
         "Upload simple Excel or directly add inputs into the table": "Laden Sie eine einfache Excel-Datei hoch oder geben Sie die Daten direkt in die Tabelle ein",
         "Excel with the desired flow inputs": "Excel mit den gewünschten Strominputs",
-        "hide_bicycle_labels": "Fahrradwerte ausblenden"
+        "hide_bicycle_labels": "Fahrradwerte ausblenden",
+        "Define custom time window": "Eigenen Auswertezeitraum definieren",
+        "Start time": "Beginn",
+        "End time": "Ende",
     },
     "English": {
         "title": "Traffic Flow Plot Generator",
@@ -94,7 +101,7 @@ TEXT = {
         "North-South": "North-South: Distance between arriving and departing flows",
         "d-helper": "Distance from centerline to middle of each flow group",
         "East-West": "East-West: Distance between arriving and departing flows",
-        "dir_table": "Traffic by intersection direction",
+        "dir_table": "Traffic by relation",
         "cardinal_table": "Traffic by cardinal direction",
         "sv_table": "Totals & Heavy Vehicle Share",
         "download": "Download",
@@ -116,7 +123,6 @@ TEXT = {
         "Plot morning peak": "Plot morning peak",
         "Plot afternoon peak": "Plot afternoon peak",
         "Time window": "Time window",
-        "Define own 1h time window": "Define own 1h time window",
         "Selected window": "Selected window",
         "Start time": "Start time",
         "User direction inputs (R1–R12)": "User direction inputs",
@@ -133,13 +139,16 @@ TEXT = {
         "SV share" : "SV share",
         "Upload simple Excel or directly add inputs into the table": "Upload simple Excel or directly add inputs into the table",
         "Excel with the desired flow inputs": "Excel with the desired flow inputs",
-        "hide_bicycle_labels": "Hide bicycle numbers"
+        "hide_bicycle_labels": "Hide bicycle numbers",
+        "Define custom time window": "Define custom evaluation period",
+        "Start time": "Start time",
+        "End time": "End time",
     },
 }
 
 # --- Language selection (sidebar) ---
 st.sidebar.header("🌐 Language")
-lang = st.sidebar.radio("Choose", ["English", "Deutsch"])
+lang = st.sidebar.radio("Choose", ["Deutsch", "English"], index=0, help="Choose the language for the UI and labels.")
 T = TEXT["Deutsch"] if lang == "Deutsch" else TEXT["English"]
 
 
@@ -276,6 +285,30 @@ def load_simple_manual_excel(excel_bytes: bytes) -> pd.DataFrame:
     return df[["Direction", "KFZ", "Bicycle"]]
 
 
+def inspect_fg_relations(excel_bytes: bytes):
+    """Erkennt ein FG-/Rad-Blatt und liefert die gefundenen Relationen."""
+    sheets = pd.read_excel(
+        io.BytesIO(excel_bytes),
+        sheet_name=None,
+        header=None,
+    )
+    sheet_name, fg_df = find_fg_sheet(sheets)
+    if fg_df is None:
+        return None, []
+    columns, _ = detect_fg_columns(fg_df)
+    return sheet_name, columns
+
+
+def default_fg_side(relation: str) -> str:
+    """Vorsichtige Vorbelegung; kann in der Oberfläche geändert werden."""
+    return {
+        "A": "N",
+        "B": "E",
+        "C": "S",
+        "D": "W",
+    }.get(str(relation).strip().upper(), "")
+
+
 # ==================================================
 # 4) Main page title
 # ==================================================
@@ -290,12 +323,53 @@ manual_mode = st.sidebar.checkbox(T["User direction inputs (R1–R12)"], value=F
 
 # Units mode: KFZ vs PKW-E
 st.sidebar.header(T["units"])
+
 mode = st.sidebar.radio(
     T["show_flows"],
-    options=["KFZ", "PKW-E"],
-    index=0,
+    options=["PKW-E","KFZ"],
+    index=0,  # PKW-E ist Standard
     help=T["unit_explanation"],
 )
+
+if mode == "PKW-E":
+    vlsa_mode = st.sidebar.radio(
+        "Kreuzungstyp",
+        options=[
+            "MIT VLSA",
+            "OHNE VLSA",
+        ],
+        index=0,  # MIT VLSA ist Standard
+        help=(
+            "Die Auswahl bestimmt die Umrechnungsfaktoren für die Berechnung der Pkw-Einheiten.\n\n"
+            "MIT VLSA (RVS 03.05.31)\n"
+            "---------------------------------\n"
+            "Rad                         0,3\n"
+            "einsp. KFZ                  0,5\n"
+            "PKW / Kombi                 1,0\n"
+            "Linienbus                   2,0\n"
+            "Reisebus                    2,0\n"
+            "LKW                         2,0\n"
+            "LKW mit Anhänger            4,0\n"
+            "sonstige KFZ / Traktoren    4,0\n\n"
+            "OHNE VLSA (RVS 03.05.11)\n"
+            "---------------------------------\n"
+            "Rad                         0,5\n"
+            "einsp. KFZ                  1,0\n"
+            "PKW / Kombi                 1,0\n"
+            "Linienbus                   1,5\n"
+            "Reisebus                    1,5\n"
+            "LKW                         1,5\n"
+            "LKW mit Anhänger            2,0\n"
+            "sonstige KFZ / Traktoren    1,5"
+        )
+    )
+else:
+    vlsa_mode = "MIT VLSA"
+
+    st.sidebar.caption(
+        "Bei KFZ werden die Originalwerte ohne "
+        "Umrechnung dargestellt."
+    )
 
 st.sidebar.header("Labels")
 hide_bicycle_labels = st.sidebar.checkbox(
@@ -303,12 +377,22 @@ hide_bicycle_labels = st.sidebar.checkbox(
     value=True,
 )
 
+show_fg_crossings = st.sidebar.checkbox(
+    "Fußgänger in Grafiken anzeigen" if lang == "Deutsch" else "Show pedestrians in plots",
+    value=True,
+)
+
+show_rad_crossings = st.sidebar.checkbox(
+    "Radfahrer in Grafiken anzeigen" if lang == "Deutsch" else "Show cyclists in plots",
+    value=True,
+)
+
 # Color pickers for flows
 st.sidebar.header(T["colors"])
-n_color = st.sidebar.color_picker(T["Nord"], "#1f77b4")
-e_color = st.sidebar.color_picker(T["Ost"], "#ff7f0e")
-s_color = st.sidebar.color_picker(T["Süd"], "#2ca02c")
-w_color = st.sidebar.color_picker(T["West"], "#d62728")
+n_color = st.sidebar.color_picker(T["Nord"], "#639ab7")
+e_color = st.sidebar.color_picker(T["Ost"], "#e8a16a")
+s_color = st.sidebar.color_picker(T["Süd"], "#9cb68b")
+w_color = st.sidebar.color_picker(T["West"], "#d46a6a")
 side_colors = {"N": n_color, "E": e_color, "S": s_color, "W": w_color}
 
 # Layout spacing controls
@@ -318,8 +402,8 @@ d_WE_value = st.sidebar.slider(T["East-West"], 0.5, 3.0, 1.5, 0.05)
 
 # Flow width selection
 st.sidebar.header(T["Width"])
-w_min_value = st.sidebar.slider(T["Wmin"], 0.0, 2.0, 0.2, 0.1)
-w_max_value = st.sidebar.slider(T["Wmax"], 0.0, 2.0, 1.1, 0.1)
+w_min_value = st.sidebar.slider(T["Wmin"], 0.0, 2.0, 0.0, 0.05)
+w_max_value = st.sidebar.slider(T["Wmax"], 0.0, 2.0, 1.4, 0.05)
 
 # Label font size selection
 st.sidebar.header("Schriftgröße")
@@ -360,31 +444,113 @@ street_names = {
 # ==================================================
 use_custom = False
 custom_start_time = None
+custom_end_time = None
 
 if not manual_mode:
     st.sidebar.header(T["Time window"])
-    use_custom = st.sidebar.checkbox(T["Define own 1h time window"], value=False)
 
-    start_options = time_list("05:00", "21:00", 15)
+    use_custom = st.sidebar.checkbox(
+        T["Define custom time window"],
+        value=False,
+    )
+
+    time_options = time_list(
+        "05:00",
+        "21:00",
+        15,
+    )
 
     if use_custom:
         custom_start_time = st.sidebar.selectbox(
             T["Start time"],
-            start_options,
+            time_options[:-1],
             index=None,
-            placeholder="Select a start time",
-            key="start_time_1h",
+            placeholder="Zeit auswählen",
+            key="custom_start_time",
         )
 
-        # If a time is chosen, show its 1-hour window
-        if custom_start_time is not None:
-            start_dt = datetime.strptime(custom_start_time, "%H:%M")
-            custom_end_time = (start_dt + timedelta(hours=1)).strftime("%H:%M")
-            st.sidebar.markdown(f"{T['Selected window']}: {custom_start_time} – {custom_end_time}")
-    else:
-        # show disabled dropdown to keep layout stable
-        st.sidebar.selectbox(T["Start time"], start_options, disabled=True, key="start_time_disabled")
+        # Standardmäßig endet der Zeitraum eine Stunde
+        # nach der gewählten Startzeit.
+        default_end_index = None
 
+        if custom_start_time is not None:
+            start_index = time_options.index(
+                custom_start_time
+            )
+
+            default_end_index = min(
+                start_index + 4,
+                len(time_options) - 1,
+            )
+
+            valid_end_options = time_options[
+                start_index + 1:
+            ]
+
+            default_end_value = time_options[
+                default_end_index
+            ]
+
+            default_relative_index = (
+                valid_end_options.index(default_end_value)
+            )
+
+            custom_end_time = st.sidebar.selectbox(
+                T["End time"],
+                valid_end_options,
+                index=default_relative_index,
+                key=f"custom_end_time_{custom_start_time}",
+            )
+
+            st.sidebar.markdown(
+                f"{T['Selected window']}: "
+                f"{custom_start_time} – "
+                f"{custom_end_time}"
+            )
+
+            start_dt = datetime.strptime(
+                custom_start_time,
+                "%H:%M",
+            )
+
+            end_dt = datetime.strptime(
+                custom_end_time,
+                "%H:%M",
+            )
+
+            duration_minutes = int(
+                (end_dt - start_dt).total_seconds()
+                / 60
+            )
+
+            duration_hours = duration_minutes / 60
+
+            st.sidebar.caption(
+                f"Dauer: {duration_hours:g} h"
+            )
+
+        else:
+            st.sidebar.selectbox(
+                T["End time"],
+                time_options,
+                disabled=True,
+                key="custom_end_time_disabled",
+            )
+
+    else:
+        st.sidebar.selectbox(
+            T["Start time"],
+            time_options,
+            disabled=True,
+            key="start_time_disabled",
+        )
+
+        st.sidebar.selectbox(
+            T["End time"],
+            time_options,
+            disabled=True,
+            key="end_time_disabled",
+        )
 
 # ==================================================
 # 7) Manual mode UI + state
@@ -486,9 +652,86 @@ else:
 # 8) Excel upload UI (Excel mode only)
 # ==================================================
 uploaded = None
+excel_bytes = None
+fg_mapping = {}
+
 if not manual_mode:
     st.write(T["upload"])
     uploaded = st.file_uploader(T["excel"], type=["xlsx"])
+
+    if uploaded is not None:
+        excel_bytes = uploaded.getvalue()
+
+        try:
+            fg_sheet_name, fg_columns = inspect_fg_relations(excel_bytes)
+        except Exception as e:
+            fg_sheet_name, fg_columns = None, []
+            st.warning(f"FG-/Rad-Blatt konnte nicht geprüft werden: {e}")
+
+        if fg_sheet_name and fg_columns:
+            st.sidebar.header("FG-/Rad-Querungen")
+            st.sidebar.caption(
+                f"Erkanntes Tabellenblatt: {fg_sheet_name}. "
+                "Ordne jede erkannte Querung ihrer Lage im Diagramm zu."
+            )
+
+            side_options = {
+                "Nicht darstellen": "",
+                "Norden": "N",
+                "Osten": "E",
+                "Süden": "S",
+                "Westen": "W",
+            }
+            labels = list(side_options.keys())
+
+            # Eine Lageauswahl je Relationsbezeichnung; FG und Rad derselben
+            # Relation werden dadurch gemeinsam an derselben Querung dargestellt.
+            relation_names = []
+            for item in fg_columns:
+                relation = str(item["relation"]).strip()
+                if relation and relation not in relation_names:
+                    relation_names.append(relation)
+
+            relation_to_side = {}
+            for relation in relation_names:
+                default_side = default_fg_side(relation)
+                default_label = next(
+                    (label for label, value in side_options.items() if value == default_side),
+                    "Nicht darstellen",
+                )
+                selected_label = st.sidebar.selectbox(
+                    f"Querung {relation}",
+                    options=labels,
+                    index=labels.index(default_label),
+                    key=f"fg_side_{uploaded.name}_{relation}",
+                    help=(
+                        "Die Bezeichnungen A, B, C, D bzw. RW... sind in den "
+                        "Zählblättern nicht immer gleich räumlich zugeordnet."
+                    ),
+                )
+                relation_to_side[relation] = side_options[selected_label]
+
+            for item in fg_columns:
+                fg_mapping[item["key"]] = relation_to_side.get(
+                    str(item["relation"]).strip(),
+                    "",
+                )
+
+            with st.sidebar.expander("Erkannte FG-/Rad-Spalten"):
+                st.dataframe(
+                    pd.DataFrame([
+                        {
+                            "Art": item["mode"],
+                            "Relation": item["relation"],
+                            "Excel-Spalte": item["column"] + 1,
+                        }
+                        for item in fg_columns
+                    ]),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+        elif uploaded is not None:
+            st.sidebar.caption("Kein auswertbares FG-/Rad-Blatt erkannt.")
 
 
 # ==================================================
@@ -497,10 +740,9 @@ if not manual_mode:
 png_list = svg_list = meta = None
 
 # --- A) Generate from Excel upload ---
-if (not manual_mode) and uploaded:
+if (not manual_mode) and excel_bytes is not None:
     try:
         with st.spinner(T["generating"]):
-            excel_bytes = uploaded.read()
             png_list, svg_list, pdf_list, meta = generate_png_from_excel(
                 excel_bytes,
                 side_colors,
@@ -509,14 +751,23 @@ if (not manual_mode) and uploaded:
                 w_min=w_min_value,
                 w_max=w_max_value,
                 mode=mode,
-                use_custom_window=use_custom and (custom_start_time is not None),
+                vlsa_mode=vlsa_mode,
+                use_custom_window=(
+                    use_custom
+                    and custom_start_time is not None
+                    and custom_end_time is not None
+                ),
                 custom_start_time=custom_start_time,
+                custom_end_time=custom_end_time,
                 show_bicycle_labels=not hide_bicycle_labels,
                 kfz_label_fontsize=kfz_label_fontsize,
                 arrow_label_fontsize=arrow_label_fontsize,
                 side_total_fontsize=side_total_fontsize,
                 street_names=street_names,
-)
+                fg_mapping=fg_mapping,
+                show_fg_crossings=show_fg_crossings,
+                show_rad_crossings=show_rad_crossings,
+            )
         st.success(T["done"])
     except Exception as e:
         st.error(f"Error: {e}")
@@ -638,7 +889,7 @@ else:
 
 st.divider()
 
-# ---- Table: per direction (KFZ/PKW + Bicycle) ----
+# ---- Table: per relation (KFZ/PKW + Bicycle and FG/Rad crossings) ----
 st.subheader(f"{T['dir_table']} ({mode} | {T['Bicycle']})")
 
 df = pd.DataFrame(meta["per_direction"])
@@ -670,6 +921,59 @@ df_out = pd.DataFrame({
 if has_custom:
     df_out[f"{T['Custom window']} ({mode} | {T['Bicycle']})"] = \
         df[f"custom_{flow_col}"].apply(fmt_int_de) + " | " + df["custom_bike"].apply(fmt_int_de)
+
+# Ergänzung: erkannte Querungen A-D bzw. weitere FG-/Rad-Relationen.
+fg_meta = meta.get("fg", {})
+fg_values_by_period = fg_meta.get("values_by_period", {})
+fg_detected = fg_meta.get("detected_columns", [])
+
+relation_names = []
+for item in fg_detected:
+    relation = str(item.get("relation", "")).strip()
+    if relation and relation not in relation_names:
+        relation_names.append(relation)
+
+def crossing_value(period_key: str, relation: str) -> str:
+    period_values = fg_values_by_period.get(period_key, {}) or {}
+    fg_value = 0.0
+    rad_value = 0.0
+    fg_found = False
+    rad_found = False
+
+    for item in period_values.values():
+        if str(item.get("relation", "")).strip() != relation:
+            continue
+        if item.get("mode") == "FG":
+            fg_value = float(item.get("value", 0.0))
+            fg_found = True
+        elif item.get("mode") == "RAD":
+            rad_value = float(item.get("value", 0.0))
+            rad_found = True
+
+    parts = []
+    if fg_found:
+        parts.append(f"FG {fmt_int_de(fg_value)}")
+    if rad_found:
+        parts.append(f"Rad {fmt_int_de(rad_value)}")
+    return " | ".join(parts) if parts else ""
+
+if relation_names:
+    crossing_rows = []
+    for relation in relation_names:
+        row = {
+            T["Direction"]: f"{relation} (Querung)",
+            f"{T['Full day']} ({mode} | {T['Bicycle']})": crossing_value("full_day", relation),
+            f"{T['Morning peak']} ({mode} | {T['Bicycle']})": crossing_value("morning_peak", relation),
+            f"{T['Afternoon peak']} ({mode} | {T['Bicycle']})": crossing_value("afternoon_peak", relation),
+        }
+        if has_custom:
+            row[f"{T['Custom window']} ({mode} | {T['Bicycle']})"] = crossing_value("custom", relation)
+        crossing_rows.append(row)
+
+    df_out = pd.concat(
+        [df_out, pd.DataFrame(crossing_rows)],
+        ignore_index=True,
+    )
 
 import pandas as pd
 
